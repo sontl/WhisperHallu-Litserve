@@ -5,6 +5,7 @@ from fastapi import Response, HTTPException
 from pydub import AudioSegment
 import torch
 from transcribeHallu import loadModel, transcribePrompt
+import json
 
 class WhisperHalluAPI(ls.LitAPI):
     def setup(self, device):
@@ -51,15 +52,18 @@ class WhisperHalluAPI(ls.LitAPI):
             prompt = "Whisper, Ok. A pertinent sentence for your purpose in your language. Ok, Whisper. Whisper, Ok. Ok, Whisper. Whisper, Ok. Please find here, an unlikely ordinary sentence. This is to avoid a repetition to be deleted. Ok, Whisper. "
 
             # Perform transcription
-            result = transcribePrompt(path=file_path, lng=lng, prompt=prompt, lngInput=lngInput, isMusic=isMusic)
+            result = transcribePrompt(path=file_path, addSRT=True, lng=lng, prompt=prompt, lngInput=lngInput, isMusic=isMusic)
             return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error transcribing audio: {str(e)}")
 
     def encode_response(self, transcription):
         try:
-            # Return the transcription as plain text
-            return Response(content=transcription, media_type="text/plain")
+            # Parse the JSON string returned by transcribePrompt
+            transcription_data = json.loads(transcription)
+            
+            # Return the transcription as JSON
+            return Response(content=json.dumps(transcription_data), media_type="application/json")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error encoding response: {str(e)}")
 

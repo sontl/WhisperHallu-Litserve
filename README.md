@@ -58,6 +58,13 @@ sudo systemctl start whisperhallu-server.service demucs-server.service
 
 ### 5. Managing the services
 
+Run with nohup
+
+```bash
+nohup python whisperhallu_server.py &
+nohup python demucs_server.py &
+```
+
 To check the status of the services:
 
 ```bash

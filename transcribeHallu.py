@@ -3,7 +3,8 @@ import os
 import time
 import re
 from _io import StringIO
- 
+import json
+
 if sys.version_info.major == 3 and sys.version_info.minor >= 10:
     print("Python >= 3.10")
     import collections.abc
@@ -210,7 +211,7 @@ def transcribePrompt(path: str,lng: str,prompt=None,lngInput=None,isMusic=False,
     print("LNGINPUT="+lngInput,flush=True)
     print("LNG="+lng,flush=True)
     print("PROMPT="+prompt,flush=True)
-    opts = dict(language=lng,initial_prompt=prompt)
+    opts = dict(language=lng,initial_prompt=prompt, word_timestamps=True)
     return transcribeOpts(path, opts,lngInput,isMusic=isMusic,addSRT=addSRT,subEnd=truncDuration,maxDuration=maxDuration)
 
 def transcribeOpts(path: str,opts: dict
@@ -220,6 +221,7 @@ def transcribeOpts(path: str,opts: dict
                    ,stretch=None
                    ,nbRun=1#Whisper is unstable, especially with music. Multiple run can provide with better results to eval afterward
                    ,remixFactor="0.3",speechnorm=True
+                   ,max_line_width=80,max_line_count=2
                    ):
     pathIn = path
     pathClean = path
@@ -388,7 +390,8 @@ def transcribeOpts(path: str,opts: dict
         result = {}
         result["text"] = ""
     else:
-        result = transcribeMARK(pathIn, opts, mode=mode,lngInput=lngInput,isMusic=isMusic)
+        result = transcribeMARK(pathIn, opts, mode=mode, lngInput=lngInput, isMusic=isMusic,
+                                nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
         if len(result["text"]) <= 0:
             result["text"] = "--"
     
@@ -399,27 +402,35 @@ def transcribeOpts(path: str,opts: dict
                and not whisperVersion == "-v3"
                ):
             if(pathREMIXN is not None):
-                resultSRT = transcribeMARK(pathREMIXN, opts, mode=3,lngInput=lngInput,isMusic=isMusic
-                                           ,nbRun=nbRun)
+                resultSRT = transcribeMARK(pathREMIXN, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                                           nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
             else:
-                resultSRT = transcribeMARK(pathClean, opts, mode=3,lngInput=lngInput,isMusic=isMusic
-                                           ,nbRun=nbRun)
+                resultSRT = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                                           nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
         else:
-            resultSRT = transcribeMARK(pathNoCut, opts, mode=3,lngInput=lngInput,isMusic=isMusic
-                                           ,nbRun=nbRun)
+            resultSRT = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                                       nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
         
-        result["text"] += resultSRT["text"]
+        result = {
+            "srt": resultSRT["srt"],
+            "text": result["text"],
+            "json": resultSRT["json"]
+        }
+    else:
+        result = {
+            "srt": "",
+            "text": result["text"],
+            "json": result["json"]
+        }
     
     print("T=",(time.time()-initTime))
     if(len(result["text"]) > 0):
         print("s/c=",(time.time()-initTime)/len(result["text"]))
     print("c/s=",len(result["text"])/(time.time()-initTime))
     
-    return result["text"]
+    return json.dumps(result)
 
-def transcribeMARK(path: str,opts: dict,mode = 1,lngInput=None,aLast=None,isMusic=False
-                   #Whisper is unstable, especially with music. Multiple run can provide with better results to eval afterward
-                   ,nbRun=1):
+def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isMusic=False, nbRun=1, max_line_width=80, max_line_count=2):
     print("transcribeMARK(): "+path)
     pathIn = path
     
@@ -484,6 +495,26 @@ def transcribeMARK(path: str,opts: dict,mode = 1,lngInput=None,aLast=None,isMusi
              print("Warning: can't add markers")
              print(e)
     
+    def format_srt_text(text, max_width, max_lines):
+        words = text.split()
+        lines = []
+        current_line = []
+        current_length = 0
+
+        for word in words:
+            if current_length + len(word) + 1 > max_width:
+                lines.append(' '.join(current_line))
+                current_line = [word]
+                current_length = len(word)
+            else:
+                current_line.append(word)
+                current_length += len(word) + 1
+
+        if current_line:
+            lines.append(' '.join(current_line))
+
+        return '\n'.join(lines[:max_lines])
+
     startTime = time.time()
     lock.acquire()
     try:
@@ -496,70 +527,93 @@ def transcribeMARK(path: str,opts: dict,mode = 1,lngInput=None,aLast=None,isMusi
             transcribe_options["temperature"] = temperature
         
         if whisperFound == "FSTR":
-            result = {}
-            result["text"] = ""
+            result = {"text": "", "srt": "", "json": []}
             multiRes = ""
             for r in range(nbRun):
                 print("RUN: "+str(r))
                 segments, info = model.transcribe(pathIn,**transcribe_options)
                 resSegs = []
+                json_segments = []
                 if(mode == 3):
                     aSegCount = 0
                     for segment in segments:
-                        if("word_timestamps" in transcribe_options):
+                        aSegCount += 1
+                        formatted_text = format_srt_text(segment.text.strip(), max_line_width, max_line_count)
+                        srt_entry = f"{aSegCount}\n{formatTimeStamp(segment.start)} --> {formatTimeStamp(segment.end)}\n{formatted_text}\n\n"
+                        resSegs.append(srt_entry)
+                        json_segment = {
+                            "start": segment.start,
+                            "end": segment.end,
+                            "sentence": segment.text.strip(),
+                            "words": []
+                        }
+                        if "word_timestamps" in transcribe_options:
                             for word in segment.words:
-                                aSegCount += 1
-                                resSegs.append("\n"+str(aSegCount)+"\n"+formatTimeStamp(word.start)+" --> "+formatTimeStamp(word.end)+"\n"+word.word.strip()+"\n")
-                        else:
-                            aSegCount += 1
-                            resSegs.append("\n"+str(aSegCount)+"\n"+formatTimeStamp(segment.start)+" --> "+formatTimeStamp(segment.end)+"\n"+segment.text.strip()+"\n")
+                                json_segment["words"].append({
+                                    "start": word.start,
+                                    "end": word.end,
+                                    "word": word.word.strip()
+                                })
+                        json_segments.append(json_segment)
                 else:
                     for segment in segments:
                         resSegs.append(segment.text)
+                        json_segments.append({
+                            "start": segment.start,
+                            "end": segment.end,
+                            "sentence": segment.text.strip(),
+                            "words": []
+                        })
                 
-                result["text"] = "".join(resSegs)
+                result["text"] += "".join(resSegs)
+                result["srt"] += "".join(resSegs) if mode == 3 else ""
+                result["json"].extend(json_segments)
                 if(r > 0):
                     multiRes += "=====\n"
                 multiRes += result["text"]
-                
+            
             if(nbRun > 1):
-                result["text"] = multiRes 
+                result["text"] = multiRes
         elif whisperFound == "SM4T":
             src_lang = lang2to3[lngInput];
             tgt_lang = lang2to3[lng];
             # S2TT
             #translated_text, _, _ = translator.predict(<path_to_input_audio>, "s2tt", <tgt_lang>)
             translated_text, _, _ = model.predict(pathIn, "s2tt", tgt_lang)
-            result = {}
-            result["text"] = str(translated_text)
+            result = {
+                "text": str(translated_text),
+                "srt": "",
+                "json": []
+            }
         else:
             transcribe_options = dict(task="transcribe", **transcribe_options)
             multiRes = ""
+            result = {"text": "", "srt": "", "json": []}
             for r in range(nbRun):
                 print("RUN: "+str(r))
-                result = model.transcribe(pathIn,**transcribe_options)
+                whisper_result = model.transcribe(pathIn,**transcribe_options)
                 if(mode == 3):
-                    p = Path(pathIn)
-                    writer = WriteSRT(p.parent)
-                    srtOpts = { "max_line_width" : 80, "max_line_count" : 2, "highlight_words" : False}
-                    if("word_timestamps" in transcribe_options and transcribe_options["word_timestamps"]):
-                        srtOpts = { "max_line_width" : 30, "max_line_count" : 1, "highlight_words" : transcribe_options["word_timestamps"]}
-                    writer(result, pathIn,srtOpts)
-                    audio_basename = os.path.basename(pathIn)
-                    audio_basename = os.path.splitext(audio_basename)[0]
-                    output_path = os.path.join(
-                        p.parent, audio_basename + ".srt"
-                        )
-                    with open(output_path) as f:
-                        result["text"] = f.read()
-                    
-                    if("word_timestamps" in transcribe_options and transcribe_options["word_timestamps"]):
-                        result["text"] = re.sub("(\n[^<\n]*<u>|</u>[^<\n]*\n)"#Remove lines without highlighted words
-                                                ,"\n",re.sub(r"\n[^<\n]*\n\n","\n\n"#Keep only highlighted words
-                                                             ,result["text"]))
+                    srt_segments = []
+                    for i, segment in enumerate(whisper_result["segments"], start=1):
+                        formatted_text = format_srt_text(segment['text'].strip(), max_line_width, max_line_count)
+                        srt_entry = f"{i}\n{formatTimeStamp(segment['start'])} --> {formatTimeStamp(segment['end'])}\n{formatted_text}\n\n"
+                        srt_segments.append(srt_entry)
+                    result["srt"] += "".join(srt_segments)
+                
+                result["text"] += whisper_result["text"]
+                for segment in whisper_result["segments"]:
+                    json_segment = {
+                        "start": segment["start"],
+                        "end": segment["end"],
+                        "sentence": segment["text"].strip(),
+                        "words": [{"start": word["start"], "end": word["end"], "word": word["word"]} for word in segment.get("words", [])]
+                    }
+                    result["json"].append(json_segment)
+                
                 if(r > 0):
                     multiRes += "=====\n"
                 multiRes += result["text"]
+            
             if(nbRun > 1):
                 result["text"] = multiRes
         
@@ -585,7 +639,7 @@ def transcribeMARK(path: str,opts: dict,mode = 1,lngInput=None,aLast=None,isMusi
         #return result
     
     aWhisper="(Whisper|Wisper|Wyspę|Wysper|Wispa|Уіспер|Ου ίσπερ|위스퍼드|ウィスパー|विस्पर|विसपर)"
-    aOk="(o[.]?k[.]?|okay|oké|okej|Окей|οκέι|오케이|オーケー|ओके)"
+    aOk="(o[.]?k[.]?|okay|oké|okej|Окей|οκέι|окэй|オーケー|ओके)"
     aSep="[.,!? ]*"
     if(mode == 1):
         aCleaned = re.sub(r"(^ *"+aWhisper+aSep+aOk+aSep+"|"+aOk+aSep+aWhisper+aSep+" *$)", "", result["text"], 2, re.IGNORECASE)
@@ -618,4 +672,3 @@ def transcribeMARK(path: str,opts: dict,mode = 1,lngInput=None,aLast=None,isMusi
             return result
         
         return transcribeMARK(path, opts, mode=0,lngInput=lngInput,aLast=aCleaned)
-
