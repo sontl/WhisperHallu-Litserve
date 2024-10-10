@@ -1,0 +1,6 @@
+litserve==0.0.1   # Adjust this version based on the latest available
+torch>=1.13.1     # Required for running FasterWhisper
+torchaudio>=0.13.1  # For handling audio files
+faster-whisper==0.2.0  # Install the specific version of FasterWhisper
+ffmpeg-python     # For handling ffmpeg operations if needed
+python-multipart  # For handling file uploads

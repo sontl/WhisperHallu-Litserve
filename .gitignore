@@ -1,0 +1,9 @@
+whisper-large-ct2
+whisper-medium-ct2
+WhisperHallu
+output.wav
+test.mp3
+transcription_*.txt
+prodenv
+__pycache__
+*.pyc

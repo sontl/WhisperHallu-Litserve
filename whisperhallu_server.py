@@ -1,0 +1,69 @@
+import litserve as ls
+import os
+import tempfile
+from fastapi import Response, HTTPException
+from pydub import AudioSegment
+import torch
+from transcribeHallu import loadModel, transcribePrompt
+
+class WhisperHalluAPI(ls.LitAPI):
+    def setup(self, device):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")
+        self.model_size = "medium"
+        loadModel("0", modelSize=self.model_size)
+
+    def decode_request(self, request):
+        # Get the uploaded audio file from the request (FormData)
+        audio_file = request["content"].file
+        if audio_file is None:
+            raise HTTPException(status_code=400, detail="No audio file found in the request.")
+
+        # Create a temporary file with a .mp3 extension
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        
+        # Read the file content
+        audio_data = audio_file.read()
+        
+        # Write the audio data to the temporary file
+        with open(temp_file.name, "wb") as f:
+            f.write(audio_data)
+        
+        # Convert MP3 to WAV
+        try:
+            audio = AudioSegment.from_mp3(temp_file.name)
+            wav_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+            audio.export(wav_file.name, format="wav")
+            
+            # Clean up the temporary MP3 file
+            os.unlink(temp_file.name)
+            print("wav_file.name: ", wav_file.name)
+            return wav_file.name
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error processing audio file: {str(e)}")
+
+    def predict(self, file_path):
+        try:
+            # Set up transcription parameters
+            lng = "en"  # You can make this configurable if needed
+            lngInput = "en"
+            isMusic = True
+            prompt = "Whisper, Ok. A pertinent sentence for your purpose in your language. Ok, Whisper. Whisper, Ok. Ok, Whisper. Whisper, Ok. Please find here, an unlikely ordinary sentence. This is to avoid a repetition to be deleted. Ok, Whisper. "
+
+            # Perform transcription
+            result = transcribePrompt(path=file_path, lng=lng, prompt=prompt, lngInput=lngInput, isMusic=isMusic)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error transcribing audio: {str(e)}")
+
+    def encode_response(self, transcription):
+        try:
+            # Return the transcription as plain text
+            return Response(content=transcription, media_type="text/plain")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error encoding response: {str(e)}")
+
+# Run the LitServe server
+if __name__ == "__main__":
+    server = ls.LitServer(WhisperHalluAPI(), accelerator="cuda")
+    server.run(port=8889)
