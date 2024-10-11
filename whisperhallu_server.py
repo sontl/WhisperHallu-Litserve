@@ -20,6 +20,10 @@ class WhisperHalluAPI(ls.LitAPI):
         if audio_file is None:
             raise HTTPException(status_code=400, detail="No audio file found in the request.")
 
+        # Get lng and lng_input from the request, with default values
+        lng = request.get("lng", "en")
+        lng_input = request.get("lng_input", "en")
+
         # Create a temporary file with a .mp3 extension
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
         
@@ -39,20 +43,22 @@ class WhisperHalluAPI(ls.LitAPI):
             # Clean up the temporary MP3 file
             os.unlink(temp_file.name)
             print("wav_file.name: ", wav_file.name)
-            return wav_file.name
+            return {"file_path": wav_file.name, "lng": lng, "lng_input": lng_input}
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error processing audio file: {str(e)}")
 
-    def predict(self, file_path):
+    def predict(self, request_data):
         try:
+            file_path = request_data["file_path"]
+            lng = request_data.get("lng", "en")
+            lng_input = request_data.get("lng_input", "en")
+
             # Set up transcription parameters
-            lng = "en"  # You can make this configurable if needed
-            lngInput = "en"
             isMusic = True
             prompt = "Whisper, Ok. A pertinent sentence for your purpose in your language. Ok, Whisper. Whisper, Ok. Ok, Whisper. Whisper, Ok. Please find here, an unlikely ordinary sentence. This is to avoid a repetition to be deleted. Ok, Whisper. "
 
             # Perform transcription
-            result = transcribePrompt(path=file_path, addSRT=True, lng=lng, prompt=prompt, lngInput=lngInput, isMusic=isMusic)
+            result = transcribePrompt(path=file_path, addSRT=True, lng=lng, prompt=prompt, lngInput=lng_input, isMusic=isMusic)
             return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error transcribing audio: {str(e)}")

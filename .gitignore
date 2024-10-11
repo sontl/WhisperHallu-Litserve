@@ -7,3 +7,4 @@ transcription_*.txt
 prodenv
 __pycache__
 *.pyc
+nohup.out

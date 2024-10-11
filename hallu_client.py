@@ -6,11 +6,17 @@ import json
 # Update this URL to your server's URL if hosted remotely
 API_URL = "http://localhost:8889/predict"
 
-def send_request(path):
+def send_request(path, lng, lng_input):
     with open(path, 'rb') as input_file:
         input_data = input_file.read()
 
-    response = requests.post(API_URL, files={"content": ("audio.mp3", input_data)})
+    # Include lng and lng_input in the request
+    data = {
+        "lng": lng,
+        "lng_input": lng_input
+    }
+
+    response = requests.post(API_URL, files={"content": ("audio.mp3", input_data)}, data=data)
     
     if response.status_code == 200:
         # Generate a unique filename for the output
@@ -43,6 +49,8 @@ def send_request(path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sends an audio file to the Whisper Hallu server and saves the transcription")
     parser.add_argument("--path", required=True, help="Path of the audio file to transcribe")
+    parser.add_argument("--lng", default="en", help="Language for transcription output (default: en)")
+    parser.add_argument("--lng_input", default="en", help="Language of the input audio (default: en)")
     args = parser.parse_args()
     
-    send_request(args.path)
+    send_request(args.path, args.lng, args.lng_input)
