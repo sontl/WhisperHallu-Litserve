@@ -5,6 +5,7 @@ import re
 from _io import StringIO
 import json
 
+
 if sys.version_info.major == 3 and sys.version_info.minor >= 10:
     print("Python >= 3.10")
     import collections.abc
@@ -81,7 +82,7 @@ except ImportError as e:
 #large-v3 model seems to be bad with music, thus keep v2 as the default
 whisperVersion = "-v2" #May be "", "-V1", "-v2, "-v3"
 whisperLoaded = "??"
-beam_size=2
+beam_size=5
 patience=0
 temperature=0
 model = None
@@ -192,37 +193,29 @@ def getPrompt(lng:str):
     #Not Already defined?
     return ""
 
+def transcribePrompt(path: str, lng: str, prompt=None, lngInput=None, isMusic=False, addSRT=False, truncDuration=TRUNC_DURATION, maxDuration=MAX_DURATION):
+    """Whisper transcribe with language detection and Gladia API for non-English."""
 
-def transcribePrompt(path: str,lng: str,prompt=None,lngInput=None,isMusic=False,addSRT=False,truncDuration=TRUNC_DURATION,maxDuration=MAX_DURATION):
-    """Whisper transcribe."""
-
-    if(lngInput == None):
-        lngInput=lng
-        print("Using output language as input language: "+lngInput)
+    if lngInput is None:
+        lngInput = lng
+        print("Using output language as input language: " + lngInput)
     
-    if(prompt == None):
-        if(not isMusic):
-            prompt=getPrompt(lng)
+    if prompt is None:
+        if not isMusic:
+            prompt = getPrompt(lng)
         else:
-            prompt="";
+            prompt = ""
     
-    print("=====transcribePrompt",flush=True)
-    print("PATH="+path,flush=True)
-    print("LNGINPUT="+lngInput,flush=True)
-    print("LNG="+lng,flush=True)
-    print("PROMPT="+prompt,flush=True)
-    opts = dict(language=lng,initial_prompt=prompt, word_timestamps=True)
-    return transcribeOpts(path, opts,lngInput,isMusic=isMusic,addSRT=addSRT,subEnd=truncDuration,maxDuration=maxDuration)
+    print("=====transcribePrompt", flush=True)
+    print("PATH=" + path, flush=True)
+    print("LNGINPUT=" + lngInput, flush=True)
+    print("LNG=" + lng, flush=True)
+    print("PROMPT=" + prompt, flush=True)
+    
+    opts = dict(language=lng, initial_prompt=prompt, word_timestamps=True)
+    return transcribeOpts(path, opts, lngInput, isMusic=isMusic, addSRT=addSRT, subEnd=truncDuration, maxDuration=maxDuration)
 
-def transcribeOpts(path: str,opts: dict
-                   ,lngInput=None,isMusic=False,onlySRT=False,addSRT=False
-                   ,subBeg="0",subEnd=str(TRUNC_DURATION)
-                   ,maxDuration=MAX_DURATION
-                   ,stretch=None
-                   ,nbRun=1#Whisper is unstable, especially with music. Multiple run can provide with better results to eval afterward
-                   ,remixFactor="0.3",speechnorm=True
-                   ,max_line_width=80,max_line_count=2
-                   ):
+def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=False, addSRT=False, subBeg="0", subEnd=str(TRUNC_DURATION), maxDuration=MAX_DURATION, stretch=None, nbRun=1, remixFactor="0.3", speechnorm=True, max_line_width=80, max_line_count=2):
     pathIn = path
     pathClean = path
     pathNoCut = path
@@ -404,6 +397,30 @@ def transcribeOpts(path: str,opts: dict
             if(pathREMIXN is not None):
                 resultSRT = transcribeMARK(pathREMIXN, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                            nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                
+                weird_word_count_1 = resultSRT["srt"].count("subscribe cho")
+                # special case for Vietnamese
+                if lngInput.lower() == 'vi' and weird_word_count_1 > 0:
+                    print("Vietnamese special case")
+                    # count the number of "subscribe cho" in the result
+                    print("weird_word_count_1 = ", weird_word_count_1)
+                    resultSRT2 = transcribeMARK(pathIn, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                                               nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)   
+                    weird_word_count_2 = resultSRT2["srt"].count("subscribe cho")
+                    if weird_word_count_2 < weird_word_count_1:
+                        resultSRT = resultSRT2
+                    if weird_word_count_2 > 0:
+                        resultSRT3 = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                                                nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                        weird_word_count_3 = resultSRT3["srt"].count("subscribe cho")
+                        if weird_word_count_3 < weird_word_count_2:
+                            resultSRT = resultSRT3
+                        if weird_word_count_3 > 0:
+                            resultSRT4 = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                                                nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                            weird_word_count_4 = resultSRT4["srt"].count("subscribe cho")
+                            if weird_word_count_4 < weird_word_count_3:
+                                resultSRT = resultSRT4
             else:
                 resultSRT = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                            nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
@@ -518,14 +535,20 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
     startTime = time.time()
     lock.acquire()
     try:
-        transcribe_options = dict(**opts)#avoid to add beam_size opt several times
+        transcribe_options = dict(**opts)  # avoid adding beam_size opt several times
         if beam_size > 1:
             transcribe_options["beam_size"] = beam_size
         if patience > 0:
             transcribe_options["patience"] = patience
         if temperature > 0:
             transcribe_options["temperature"] = temperature
-        
+
+        # Check if both input and target languages are non-English and different
+        # if lngInput and lng and lngInput.lower() == 'vi' :
+        #     # Use Gladia API directly
+        #     gladia_result = transcribe_with_gladia(pathIn, lngInput, lng)
+        #     result = json.loads(gladia_result)
+        # elif whisperFound == "FSTR":
         if whisperFound == "FSTR":
             result = {"text": "", "srt": "", "json": []}
             multiRes = ""
@@ -558,12 +581,20 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
                 else:
                     for segment in segments:
                         resSegs.append(segment.text)
-                        json_segments.append({
+                        json_segment = {
                             "start": segment.start,
                             "end": segment.end,
                             "sentence": segment.text.strip(),
                             "words": []
-                        })
+                        }
+                        if "word_timestamps" in transcribe_options:
+                            for word in segment.words:
+                                json_segment["words"].append({
+                                    "start": word.start,
+                                    "end": word.end,
+                                    "word": word.word.strip()
+                                })
+                        json_segments.append(json_segment)
                 
                 result["text"] += "".join(resSegs)
                 result["srt"] += "".join(resSegs) if mode == 3 else ""
@@ -591,7 +622,7 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
             result = {"text": "", "srt": "", "json": []}
             for r in range(nbRun):
                 print("RUN: "+str(r))
-                whisper_result = model.transcribe(pathIn,**transcribe_options)
+                whisper_result = model.transcribe(pathIn, **transcribe_options)
                 if(mode == 3):
                     srt_segments = []
                     for i, segment in enumerate(whisper_result["segments"], start=1):
@@ -623,9 +654,7 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
         print(e)
         traceback.print_exc()
         lock.release()
-        result = {}
-        result["text"] = ""
-        return result
+        result = {"text": "", "srt": "", "json": []}
     
     lock.release()
     
@@ -672,3 +701,92 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
             return result
         
         return transcribeMARK(path, opts, mode=0,lngInput=lngInput,aLast=aCleaned)
+
+import requests
+def transcribe_with_gladia(audio_path, source_lang, target_lang):
+    upload_url = "https://api.gladia.io/v2/upload"
+    transcribe_url = "https://api.gladia.io/v2/transcription"
+    
+    headers = {
+        "x-gladia-key": "aac97688-7e14-4274-8e03-cbf2a8212828"
+    }
+
+    try:
+        # Step 1: Upload the file
+        with open(audio_path, "rb") as audio_file:
+            print("audio_path: "+ audio_path)
+            files = {"audio": (os.path.basename(audio_path), audio_file, "audio/mpeg")}
+            upload_response = requests.post(upload_url, files=files, headers=headers)
+        
+        if upload_response.status_code != 200:
+            print(f"Error uploading file: {upload_response.status_code}")
+            print(upload_response.text)
+            return json.dumps({"text": "", "srt": "", "json": []})
+
+        upload_result = upload_response.json()
+        audio_url = upload_result["audio_url"]
+
+        # Step 2: Request transcription
+        transcribe_headers = {
+            "x-gladia-key": "aac97688-7e14-4274-8e03-cbf2a8212828",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "audio_url": audio_url,
+            "detect_language": True,
+            "language": source_lang,
+            "translation": True,
+            "translation_config": {
+                "target_languages": [target_lang],
+                "model": "base",
+                "match_original_utterances": True
+            },
+            "diarization": True,
+            "subtitles": True,
+            "subtitles_config": {
+                "formats": ["srt"],
+            },
+        }
+
+        transcribe_response = requests.post(transcribe_url, json=payload, headers=transcribe_headers)
+        
+        if transcribe_response.status_code == 200:
+            transcribe_result = transcribe_response.json()
+            result_url = transcribe_result["result_url"]
+            
+            # Step 3: Fetch the result
+            result_response = requests.get(result_url, headers=headers)
+            
+            if result_response.status_code == 200:
+                result = result_response.json()
+                print(result)
+                # Extract relevant information from the Gladia API response
+                transcription = result.get('result', {}).get('transcription', {}).get('full_transcript', '')
+                translation = result.get('result', {}).get('translation', {}).get('full_transcript', '')
+                srt = result.get('result', {}).get('subtitles', [{}])[0].get('subtitles', '')
+                
+                # Extract word-level data
+                words = []
+                for utterance in result.get('result', {}).get('transcription', {}).get('utterances', []):
+                    words.extend(utterance.get('words', []))
+                
+                # Construct the result in the format expected by the rest of the code
+                formatted_result = {
+                    "text": translation if translation else transcription,
+                    "srt": srt,
+                    "json": words
+                }
+                
+                return json.dumps(formatted_result)
+            else:
+                print(f"Error fetching result from Gladia API: {result_response.status_code}")
+                print(result_response.text)
+                return json.dumps({"text": "", "srt": "", "json": []})
+        else:
+            print(f"Error requesting transcription from Gladia API: {transcribe_response.status_code}")
+            print(transcribe_response.text)
+            return json.dumps({"text": "", "srt": "", "json": []})
+    except requests.exceptions.RequestException as e:
+        print(f"Error connecting to Gladia API: {e}")
+        return json.dumps({"text": "", "srt": "", "json": []})
