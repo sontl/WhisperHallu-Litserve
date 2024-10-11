@@ -4,7 +4,7 @@ import time
 import re
 from _io import StringIO
 import json
-
+from json_util import split_transcription
 
 if sys.version_info.major == 3 and sys.version_info.minor >= 10:
     print("Python >= 3.10")
@@ -439,7 +439,11 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
             "text": result["text"],
             "json": result["json"]
         }
+  
     
+    result["json"] = split_transcription(result["json"])
+    
+
     print("T=",(time.time()-initTime))
     if(len(result["text"]) > 0):
         print("s/c=",(time.time()-initTime)/len(result["text"]))
