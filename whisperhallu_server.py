@@ -105,5 +105,5 @@ class WhisperHalluAPI(ls.LitAPI):
 
 # Run the LitServe server
 if __name__ == "__main__":
-    server = ls.LitServer(WhisperHalluAPI(), accelerator="cuda")
+    server = ls.LitServer(WhisperHalluAPI(), accelerator="cuda", timeout=120)  # Increased timeout to 120 seconds
     server.run(port=8889)
