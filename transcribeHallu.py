@@ -575,7 +575,7 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
                                 json_segment["words"].append({
                                     "start": word.start,
                                     "end": word.end,
-                                    "word": word.word.strip()
+                                    "text": word.word.strip()
                                 })
                         json_segments.append(json_segment)
                 else:
@@ -592,7 +592,7 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
                                 json_segment["words"].append({
                                     "start": word.start,
                                     "end": word.end,
-                                    "word": word.word.strip()
+                                    "text": word.word.strip()
                                 })
                         json_segments.append(json_segment)
                 
@@ -637,7 +637,7 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
                         "start": segment["start"],
                         "end": segment["end"],
                         "sentence": segment["text"].strip(),
-                        "words": [{"start": word["start"], "end": word["end"], "word": word["word"]} for word in segment.get("words", [])]
+                        "words": [{"start": word["start"], "end": word["end"], "text": word["word"]} for word in segment.get("words", [])]
                     }
                     result["json"].append(json_segment)
                 

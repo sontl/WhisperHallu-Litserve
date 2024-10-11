@@ -6,6 +6,7 @@ from pydub import AudioSegment
 import torch
 from transcribeHallu import loadModel, transcribePrompt
 import json
+import requests
 
 class WhisperHalluAPI(ls.LitAPI):
     def setup(self, device):
@@ -15,14 +16,42 @@ class WhisperHalluAPI(ls.LitAPI):
         loadModel("0", modelSize=self.model_size)
 
     def decode_request(self, request):
-        # Get the uploaded audio file from the request (FormData)
-        audio_file = request["content"].file
-        if audio_file is None:
-            raise HTTPException(status_code=400, detail="No audio file found in the request.")
+        # Get the URL from the request, if present
+        url = request.get("url")
 
         # Get lng and lng_input from the request, with default values
         lng = request.get("lng", "en")
         lng_input = request.get("lng_input", "en")
+
+        if url:
+            # If URL is provided, download the file
+            try:
+                response = requests.get(url)
+                response.raise_for_status()
+                
+                # Create a temporary file with a .mp3 extension
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                
+                # Write the downloaded content to the temporary file
+                with open(temp_file.name, "wb") as f:
+                    f.write(response.content)
+                
+                # Convert MP3 to WAV
+                audio = AudioSegment.from_mp3(temp_file.name)
+                wav_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                audio.export(wav_file.name, format="wav")
+                
+                # Clean up the temporary MP3 file
+                os.unlink(temp_file.name)
+                
+                return {"file_path": wav_file.name, "lng": lng, "lng_input": lng_input}
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Error downloading or processing file from URL: {str(e)}")
+
+        # If no URL, process the audio file as before
+        audio_file = request["content"].file
+        if audio_file is None:
+            raise HTTPException(status_code=400, detail="No audio file or URL found in the request.")
 
         # Create a temporary file with a .mp3 extension
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
@@ -59,6 +88,7 @@ class WhisperHalluAPI(ls.LitAPI):
 
             # Perform transcription
             result = transcribePrompt(path=file_path, addSRT=True, lng=lng, prompt=prompt, lngInput=lng_input, isMusic=isMusic)
+
             return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error transcribing audio: {str(e)}")

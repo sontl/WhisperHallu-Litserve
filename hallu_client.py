@@ -6,17 +6,21 @@ import json
 # Update this URL to your server's URL if hosted remotely
 API_URL = "http://localhost:8889/predict"
 
-def send_request(path, lng, lng_input):
-    with open(path, 'rb') as input_file:
-        input_data = input_file.read()
-
-    # Include lng and lng_input in the request
+def send_request(input_source, lng, lng_input, is_url=False):
     data = {
         "lng": lng,
         "lng_input": lng_input
     }
 
-    response = requests.post(API_URL, files={"content": ("audio.mp3", input_data)}, data=data)
+    if is_url:
+        data["url"] = input_source
+        files = None
+    else:
+        with open(input_source, 'rb') as input_file:
+            input_data = input_file.read()
+        files = {"content": ("audio.mp3", input_data)}
+
+    response = requests.post(API_URL, files=files, data=data)
     
     if response.status_code == 200:
         # Generate a unique filename for the output
@@ -47,10 +51,15 @@ def send_request(path, lng, lng_input):
         print(f"Error: Response with status code {response.status_code} - {response.text}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Sends an audio file to the Whisper Hallu server and saves the transcription")
-    parser.add_argument("--path", required=True, help="Path of the audio file to transcribe")
+    parser = argparse.ArgumentParser(description="Sends an audio file or URL to the Whisper Hallu server and saves the transcription")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--path", help="Path of the audio file to transcribe")
+    group.add_argument("--url", help="URL of the audio file to transcribe")
     parser.add_argument("--lng", default="en", help="Language for transcription output (default: en)")
     parser.add_argument("--lng_input", default="en", help="Language of the input audio (default: en)")
     args = parser.parse_args()
     
-    send_request(args.path, args.lng, args.lng_input)
+    if args.url:
+        send_request(args.url, args.lng, args.lng_input, is_url=True)
+    else:
+        send_request(args.path, args.lng, args.lng_input, is_url=False)
