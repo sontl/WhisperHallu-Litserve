@@ -399,8 +399,9 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
                                            nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
                 
                 weird_word_count_1 = resultSRT["srt"].count("subscribe cho")
+                weird_word_count_threshold = 2
                 # special case for Vietnamese
-                if lngInput.lower() == 'vi' and weird_word_count_1 > 0:
+                if lngInput.lower() == 'vi' and weird_word_count_1 > weird_word_count_threshold:
                     print("Vietnamese special case")
                     # count the number of "subscribe cho" in the result
                     print("weird_word_count_1 = ", weird_word_count_1)
@@ -409,13 +410,13 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
                     weird_word_count_2 = resultSRT2["srt"].count("subscribe cho")
                     if weird_word_count_2 < weird_word_count_1:
                         resultSRT = resultSRT2
-                    if weird_word_count_2 > 0:
+                    if weird_word_count_2 > weird_word_count_threshold:
                         resultSRT3 = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                                 nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
                         weird_word_count_3 = resultSRT3["srt"].count("subscribe cho")
                         if weird_word_count_3 < weird_word_count_2:
                             resultSRT = resultSRT3
-                        if weird_word_count_3 > 0:
+                        if weird_word_count_3 > weird_word_count_threshold:
                             resultSRT4 = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                                 nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
                             weird_word_count_4 = resultSRT4["srt"].count("subscribe cho")
