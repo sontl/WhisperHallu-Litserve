@@ -75,17 +75,25 @@ def split_sentence(sentence, words):
     
     return new_sentences
 
+def contains_weird_words(text):
+    weird_words = ["Hãy đăng ký kênh", "subscribe cho"]
+    return any(word.lower() in text.lower() for word in weird_words)
+
 def process_json(input_json):
     output_json = []
     
     for item in input_json:
+        if contains_weird_words(item['sentence']):
+            item['sentence'] = ""
+            item['words'] = []  # Set words to an empty array
+      
         if ',' in item['sentence'] or '.' in item['sentence']:
             new_sentences = split_sentence(item['sentence'], item['words'])
             output_json.extend(new_sentences)
         else:
             output_json.append(item)
     
-    return output_json  # Return the list directly, not in a set or dict
+    return output_json
 
 def split_transcription(input_data):
     # Process the JSON
