@@ -1,5 +1,41 @@
 import json
 
+def convert_gladia_to_internal_format(gladia_response):
+    result = {
+        "text": "",
+        "srt": "",
+        "json": []
+    }
+
+    # Extract full transcript
+    gladia_response = gladia_response.get("result", {})
+    
+
+   
+
+    # Extract and format JSON data
+    utterances = gladia_response.get("transcription", {}).get("utterances", [])
+   
+    for utterance in utterances:
+        json_segment = {
+            "start": utterance.get("start", 0),
+            "end": utterance.get("end", 0),
+            "sentence": utterance.get("text", "").strip(),
+            "words": []
+        }
+        
+        for word in utterance.get("words", []):
+            json_segment["words"].append({
+                "start": word.get("start", 0),
+                "end": word.get("end", 0),
+                "text": word.get("word", "").strip()
+            })
+        
+        result["json"].append(json_segment)
+    result["text"] = gladia_response.get("transcription", {}).get("full_transcript", "")
+    result["srt"] = gladia_response.get("transcription", {}).get("subtitles", [])[0].get("subtitles", "")
+    return result
+
 def split_sentence(sentence, words):
     parts = [part.strip() for part in sentence.replace('.', ',').split(',') if part.strip()]
     new_sentences = []

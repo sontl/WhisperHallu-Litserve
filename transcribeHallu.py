@@ -4,7 +4,7 @@ import time
 import re
 from _io import StringIO
 import json
-from json_util import split_transcription
+from json_util import split_transcription, convert_gladia_to_internal_format
 
 if sys.version_info.major == 3 and sys.version_info.minor >= 10:
     print("Python >= 3.10")
@@ -215,6 +215,9 @@ def transcribePrompt(path: str, lng: str, prompt=None, lngInput=None, isMusic=Fa
     opts = dict(language=lng, initial_prompt=prompt, word_timestamps=True)
     return transcribeOpts(path, opts, lngInput, isMusic=isMusic, addSRT=addSRT, subEnd=truncDuration, maxDuration=maxDuration)
 
+def count_weird_words(text):
+    return text.count("Hãy đăng ký kênh") + text.count("subscribe cho")
+
 def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=False, addSRT=False, subBeg="0", subEnd=str(TRUNC_DURATION), maxDuration=MAX_DURATION, stretch=None, nbRun=1, remixFactor="0.3", speechnorm=True, max_line_width=80, max_line_count=2):
     pathIn = path
     pathClean = path
@@ -398,50 +401,75 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
                 resultSRT = transcribeMARK(pathREMIXN, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                            nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
                 
-                weird_word_count_1 = resultSRT["srt"].count("subscribe cho")
+                weird_word_count_1 = count_weird_words(resultSRT["srt"])
                 weird_word_count_threshold = 2
                 # special case for Vietnamese
                 if lngInput.lower() == 'vi' and weird_word_count_1 > weird_word_count_threshold:
                     print("Vietnamese special case")
-                    # count the number of "subscribe cho" in the result
                     print("weird_word_count_1 = ", weird_word_count_1)
-                    resultSRT2 = transcribeMARK(pathIn, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                    resultSRT2 = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                                nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)   
-                    weird_word_count_2 = resultSRT2["srt"].count("subscribe cho")
+                    weird_word_count_2 = count_weird_words(resultSRT2["srt"])
+                    print("weird_word_count_2 = ", weird_word_count_2)
                     if weird_word_count_2 < weird_word_count_1:
                         resultSRT = resultSRT2
                     if weird_word_count_2 > weird_word_count_threshold:
-                        resultSRT3 = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                        if "SILCUT" not in pathIn:
+                            resultSRT3 = transcribeMARK(pathIn, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                                 nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
-                        weird_word_count_3 = resultSRT3["srt"].count("subscribe cho")
+                        else:
+                            resultSRT3 = resultSRT2
+                        
+                        weird_word_count_3 = count_weird_words(resultSRT3["srt"])
+                        print("weird_word_count_3 = ", weird_word_count_3)
                         if weird_word_count_3 < weird_word_count_2:
                             resultSRT = resultSRT3
                         if weird_word_count_3 > weird_word_count_threshold:
-                            resultSRT4 = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
-                                                nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
-                            weird_word_count_4 = resultSRT4["srt"].count("subscribe cho")
+                            if "SILCUT" not in pathIn:
+                                resultSRT4 = transcribe_with_gladia(pathIn, lngInput, opts["language"])
+                            else:
+                                resultSRT4 = transcribe_with_gladia(pathREMIXN, lngInput, opts["language"])
+                            
+                            resultSRT4 = json.loads(resultSRT4)
+                            weird_word_count_4 = count_weird_words(resultSRT4["text"])
+                            print("weird_word_count_4 = ", weird_word_count_4)
                             if weird_word_count_4 < weird_word_count_3:
                                 resultSRT = resultSRT4
+                            if weird_word_count_4 > weird_word_count_threshold:
+                                resultSRT5 = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                                            nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                                weird_word_count_5 = count_weird_words(resultSRT5["srt"])
+                                print("weird_word_count_5 = ", weird_word_count_5)
+                                if weird_word_count_5 < weird_word_count_4:
+                                    resultSRT = resultSRT5
             else:
                 resultSRT = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                            nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
         else:
             resultSRT = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                        nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
-        
-        result = {
-            "srt": resultSRT["srt"],
-            "text": result["text"],
-            "json": resultSRT["json"]
-        }
+        # Ensure resultSRT is a dictionary before accessing its keys
+        if isinstance(resultSRT, dict):
+            result = {
+                "srt": resultSRT.get("srt", ""),
+                "text": resultSRT.get("text", ""),
+                "json": resultSRT.get("json", [])
+            }
+        else:
+            print(f"Warning: resultSRT is not a dictionary. Type: {type(resultSRT)}")
+            print("resultSRT = ", resultSRT)
+            result = {
+                "srt": "",
+                "text": resultSRT.get("text", ""),
+                "json": []
+            }
     else:
         result = {
             "srt": "",
-            "text": result["text"],
-            "json": result["json"]
+            "text": result.get("text", ""),
+            "json": result.get("json", [])
         }
   
-    
     result["json"] = split_transcription(result["json"])
     
 
@@ -710,7 +738,7 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
 import requests
 def transcribe_with_gladia(audio_path, source_lang, target_lang):
     upload_url = "https://api.gladia.io/v2/upload"
-    transcribe_url = "https://api.gladia.io/v2/transcription"
+    transcribe_url = "https://api.gladia.io/v2/pre-recorded"
     
     headers = {
         "x-gladia-key": "aac97688-7e14-4274-8e03-cbf2a8212828"
@@ -755,39 +783,33 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
         }
 
         transcribe_response = requests.post(transcribe_url, json=payload, headers=transcribe_headers)
-        
-        if transcribe_response.status_code == 200:
+        if transcribe_response.status_code == 200 or transcribe_response.status_code == 201:
             transcribe_result = transcribe_response.json()
             result_url = transcribe_result["result_url"]
             
-            # Step 3: Fetch the result
-            result_response = requests.get(result_url, headers=headers)
-            
-            if result_response.status_code == 200:
-                result = result_response.json()
-                print(result)
-                # Extract relevant information from the Gladia API response
-                transcription = result.get('result', {}).get('transcription', {}).get('full_transcript', '')
-                translation = result.get('result', {}).get('translation', {}).get('full_transcript', '')
-                srt = result.get('result', {}).get('subtitles', [{}])[0].get('subtitles', '')
+            # Step 3: Fetch the result with polling
+            max_attempts = 12  # 1 minute total (5 seconds * 12)
+            attempts = 0
+            while attempts < max_attempts:
+                result_response = requests.get(result_url, headers=headers)
                 
-                # Extract word-level data
-                words = []
-                for utterance in result.get('result', {}).get('transcription', {}).get('utterances', []):
-                    words.extend(utterance.get('words', []))
-                
-                # Construct the result in the format expected by the rest of the code
-                formatted_result = {
-                    "text": translation if translation else transcription,
-                    "srt": srt,
-                    "json": words
-                }
-                
-                return json.dumps(formatted_result)
-            else:
-                print(f"Error fetching result from Gladia API: {result_response.status_code}")
-                print(result_response.text)
-                return json.dumps({"text": "", "srt": "", "json": []})
+                if result_response.status_code == 200 or result_response.status_code == 201:
+                    gladia_result = result_response.json()
+                    
+                    if gladia_result.get("status") == "done":
+                        formatted_result = convert_gladia_to_internal_format(gladia_result)
+                        return json.dumps(formatted_result)
+                    else:
+                        print(f"Gladia result not ready. Status: {gladia_result.get('status')}. Waiting 5 seconds...")
+                        time.sleep(5)
+                        attempts += 1
+                else:
+                    print(f"Error fetching result from Gladia API: {result_response.status_code}")
+                    print(result_response.text)
+                    return json.dumps({"text": "", "srt": "", "json": []})
+
+            print("Max attempts reached. Gladia result not ready.")
+            return json.dumps({"text": "", "srt": "", "json": []})
         else:
             print(f"Error requesting transcription from Gladia API: {transcribe_response.status_code}")
             print(transcribe_response.text)
