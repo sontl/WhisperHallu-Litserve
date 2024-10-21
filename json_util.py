@@ -76,7 +76,7 @@ def split_sentence(sentence, words):
     return new_sentences
 
 def contains_weird_words(text):
-    weird_words = ["Hãy đăng ký kênh", "subscribe cho"]
+    weird_words = ["Hãy đăng ký kênh", "subscribe cho", "Ghiền Mì Gõ"]
     return any(word.lower() in text.lower() for word in weird_words)
 
 def process_json(input_json):
