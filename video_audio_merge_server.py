@@ -3,10 +3,10 @@ import os
 import tempfile
 from fastapi import Response, HTTPException
 import urllib.request
-import subprocess
-
+import ffmpeg
+from starlette.middleware.cors import CORSMiddleware
 class VideoAudioMergeAPI(ls.LitAPI):
-    def setup(self):
+    def setup(self, device):
         # No specific setup needed for this server
         pass
 
@@ -29,11 +29,11 @@ class VideoAudioMergeAPI(ls.LitAPI):
             # Save the uploaded video to a temporary file
             video_temp.write(video_file.read())
             video_temp.close()
-
+            print(f"Saved video to {video_temp.name}")
             # Download the audio file
             urllib.request.urlretrieve(audio_url, audio_temp.name)
             audio_temp.close()
-
+            print(f"Saved audio to {audio_temp.name}")
             return video_temp.name, audio_temp.name
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error processing files: {str(e)}")
@@ -43,32 +43,45 @@ class VideoAudioMergeAPI(ls.LitAPI):
         output_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
 
         try:
-            # Use FFmpeg to merge video and audio
-            cmd = [
-                "ffmpeg",
-                "-i", video_path,
-                "-i", audio_path,
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-shortest",
-                output_path
-            ]
-            subprocess.run(cmd, check=True, capture_output=True)
+            # Input video and audio streams
+            input_video = ffmpeg.input(video_path)
+            input_audio = ffmpeg.input(audio_path)
+
+            # Merge video and audio
+            output = ffmpeg.output(
+                input_video,
+                input_audio,
+                output_path,
+                vcodec='copy',  # Copy video codec
+                acodec='aac',   # Use AAC for audio
+                shortest=None   # End the output when the shortest input stream ends
+            )
+
+            # Run the FFmpeg command
+            ffmpeg.run(output, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+
+            print("FFmpeg process completed successfully")
 
             # Clean up temporary files
             os.unlink(video_path)
             os.unlink(audio_path)
-
+            print(f"Unlinked temporary files")
+            print(f"Returning output path: {output_path}")
             return output_path
-        except subprocess.CalledProcessError as e:
+
+        except ffmpeg.Error as e:
+            # FFmpeg error occurred
+            print(f"FFmpeg error: {e.stderr.decode()}")
             raise HTTPException(status_code=500, detail=f"FFmpeg error: {e.stderr.decode()}")
+
         except Exception as e:
+            # Other exceptions
+            print(f"Error merging files: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error merging files: {str(e)}")
 
     def encode_response(self, output_path):
         try:
+            print(f"Encoding response with output path: {output_path}")
             # Read the content of the merged file
             with open(output_path, "rb") as f:
                 content = f.read()
@@ -81,5 +94,15 @@ class VideoAudioMergeAPI(ls.LitAPI):
 
 # Run the LitServe server
 if __name__ == "__main__":
-    server = ls.LitServer(VideoAudioMergeAPI())
+    # Define the CORS settings
+    cors_middleware = (
+        CORSMiddleware, 
+        {
+            "allow_origins": ["https://*.singmesong.com", "http://localhost:3000"],  # Allows all origins
+            "allow_methods": ["GET", "POST"],  # Allows GET and POST methods
+            "allow_headers": ["*"],  # Allows all headers
+        }
+    )
+    server = ls.LitServer(VideoAudioMergeAPI(), middlewares=[cors_middleware])
+    
     server.run(port=8887)

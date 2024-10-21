@@ -96,6 +96,17 @@ curl -X POST http://127.0.0.1:8000/predict -F "audio_file=@path_to_audio_file.wa
 
 The response will be in JSON format and contain the transcribed text from the audio.
 
+### 7. Run Unit Tests
+
+To run the unit tests for the project, use the following commands:
+
+```bash
+python -m unittest test_json_util.py
+python -m unittest test_video_audio_merge_server.py
+```
+
+These commands will run the unit tests for the JSON utility functions and the video-audio merge server, respectively. Make sure you're in the project's root directory when running these commands.
+
 ## How does it work?
 - **LitServe API**: The API is powered by LitServe, which handles the requests and sets up the server.
 - **FasterWhisperHallu**: This model is loaded during server initialization. When an audio file is uploaded, FasterWhisperHallu processes it, splitting it into segments, and transcribes the audio.
