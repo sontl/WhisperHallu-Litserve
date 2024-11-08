@@ -23,19 +23,27 @@ cd <your-repo-directory>
 
 ### 2. Install Dependencies
 
-Make sure you have Python 3.8+ installed. Install the necessary dependencies using the provided `requirements.txt` file.
+#### Make sure you have Python 3.8+ installed. Install the necessary dependencies using the provided `requirements.txt` file.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-You also need to have *FFmpeg* installed on your system. You can install it via your package manager:
+#### You also need to have *FFmpeg* installed on your system. You can install it via your package manager:
 
 ```bash
 sudo apt install ffmpeg
 ```
 
-### 3. Set up systemd services
+#### Set up environment variables
+
+You can set up the environment variables in the .env file.  Set the permissions so only the owner can read/write the file:
+
+```bash
+chmod 600 .env
+```
+
+### 4. Set up systemd services
 
 Create systemd service files for both the WhisperHallu and Demucs servers:
 
@@ -65,6 +73,15 @@ nohup python whisperhallu_server.py &
 nohup python demucs_server.py &
 ```
 
+Or use the start_whisperhallu.sh script:
+
+```bash
+chmod +x start_whisperhallu.sh
+```bash
+./start_whisperhallu.sh start
+```
+
+
 To check the status of the services:
 
 ```bash
@@ -78,10 +95,23 @@ To stop the services:
 sudo systemctl stop whisperhallu-server.service demucs-server.service
 ```
 
+Or use the start_whisperhallu.sh script:
+
+```bash
+./start_whisperhallu.sh stop
+```
+
+
 To restart the services:
 
 ```bash
 sudo systemctl restart whisperhallu-server.service demucs-server.service
+```
+
+Or use the start_whisperhallu.sh script:
+
+```bash
+./start_whisperhallu.sh restart
 ```
 
 The services are set to start automatically on system boot.
@@ -105,6 +135,20 @@ python -m unittest test_json_util.py
 python -m unittest test_video_audio_merge_server.py
 ```
 
+### 8. Check logs
+
+You can check the logs in the logs directory.
+
+```bash
+cat logs/whisperhallu_YYYYMMDD.log
+```
+
+```bash
+cat logs/nohup.YYYYMMDD.out
+```
+
+
+
 These commands will run the unit tests for the JSON utility functions and the video-audio merge server, respectively. Make sure you're in the project's root directory when running these commands.
 
 ## How does it work?
@@ -116,6 +160,16 @@ These commands will run the unit tests for the JSON utility functions and the vi
 Add streaming capabilities to handle larger audio files in chunks.
 Integrate batching to handle multiple audio files in one request.
 Expand to support other models beyond FasterWhisper.
+
+## Crontab
+
+You can add the following crontab to clean the logs every day at 00:00:
+
+```bash
+0 0 * * * /usr/bin/find /path/to/logs -type f -mtime +7 -delete
+```
+
+
 
 ## Contributing
 Contributions are welcome! Please fork the repository and submit pull requests.

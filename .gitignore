@@ -8,3 +8,5 @@ prodenv
 __pycache__
 *.pyc
 nohup.out
+.env
+logs/*

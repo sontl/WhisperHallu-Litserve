@@ -740,8 +740,14 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
     upload_url = "https://api.gladia.io/v2/upload"
     transcribe_url = "https://api.gladia.io/v2/pre-recorded"
     
+    # Get API key from environment variable
+    api_key = os.getenv('GLADIA_API_KEY')
+    if not api_key:
+        print("Error: GLADIA_API_KEY environment variable not set")
+        return json.dumps({"text": "", "srt": "", "json": []})
+
     headers = {
-        "x-gladia-key": "aac97688-7e14-4274-8e03-cbf2a8212828"
+        "x-gladia-key": api_key
     }
 
     try:
@@ -761,7 +767,7 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
 
         # Step 2: Request transcription
         transcribe_headers = {
-            "x-gladia-key": "aac97688-7e14-4274-8e03-cbf2a8212828",
+            "x-gladia-key": api_key,
             "Content-Type": "application/json"
         }
         
@@ -787,10 +793,18 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
             transcribe_result = transcribe_response.json()
             result_url = transcribe_result["result_url"]
             
-            # Step 3: Fetch the result with polling
-            max_attempts = 12  # 1 minute total (5 seconds * 12)
-            attempts = 0
-            while attempts < max_attempts:
+            # Step 3: Fetch the result with Fibonacci backoff polling
+            def fibonacci():
+                a, b = 1, 1
+                while True:
+                    yield a
+                    a, b = b, a + b
+
+            max_wait_time = 300  # Maximum total wait time in seconds
+            total_wait_time = 0
+            fib = fibonacci()
+
+            while total_wait_time < max_wait_time:
                 result_response = requests.get(result_url, headers=headers)
                 
                 if result_response.status_code == 200 or result_response.status_code == 201:
@@ -800,15 +814,16 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
                         formatted_result = convert_gladia_to_internal_format(gladia_result)
                         return json.dumps(formatted_result)
                     else:
-                        print(f"Gladia result not ready. Status: {gladia_result.get('status')}. Waiting 5 seconds...")
-                        time.sleep(5)
-                        attempts += 1
+                        wait_time = next(fib)
+                        total_wait_time += wait_time
+                        print(f"Gladia result not ready. Status: {gladia_result.get('status')}. Waiting {wait_time} seconds... (Total wait: {total_wait_time}s)")
+                        time.sleep(wait_time)
                 else:
                     print(f"Error fetching result from Gladia API: {result_response.status_code}")
                     print(result_response.text)
                     return json.dumps({"text": "", "srt": "", "json": []})
 
-            print("Max attempts reached. Gladia result not ready.")
+            print(f"Max wait time ({max_wait_time}s) reached. Gladia result not ready.")
             return json.dumps({"text": "", "srt": "", "json": []})
         else:
             print(f"Error requesting transcription from Gladia API: {transcribe_response.status_code}")
