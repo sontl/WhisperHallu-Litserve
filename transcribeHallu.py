@@ -205,7 +205,7 @@ def getPrompt(lng:str):
             +"आपकी भाषा में आपके उद्देश्य के लिए एक प्रासंगिक वाक्य। "\
             +"ओके, विस्पर. विस्पर, ओके. ओके, विस्पर. विस्पर, ओके. "\
             +"कृपया यहां खोजें, एक असंभावित सामान्य वाक्य। "\
-            +"यह हटाए जाने की पुनरावृत्ति से बचने के लिए है। "\
+            +"यह हटाए जाने की पुनरावृत्ति से ��चने के लिए है। "\
             +"ओके, विस्पर. "
     
     #Not Already defined?
@@ -231,12 +231,12 @@ def transcribePrompt(path: str, lng: str, prompt=None, lngInput=None, isMusic=Fa
     logger.info(f"PROMPT: {prompt}")
     
     opts = dict(language=lng, initial_prompt=prompt, word_timestamps=True)
-    return transcribeOpts(path, opts, lngInput, isMusic=isMusic, addSRT=addSRT, subEnd=truncDuration, maxDuration=maxDuration)
+    return transcribeOpts(path, opts, lngInput, lng, isMusic=isMusic, addSRT=addSRT, subEnd=truncDuration, maxDuration=maxDuration)
 
 def count_weird_words(text):
     return text.count("Hãy đăng ký kênh") + text.count("subscribe cho")
 
-def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=False, addSRT=False, subBeg="0", subEnd=str(TRUNC_DURATION), maxDuration=MAX_DURATION, stretch=None, nbRun=1, remixFactor="0.3", speechnorm=True, max_line_width=80, max_line_count=2):
+def transcribeOpts(path: str, opts: dict, lngInput=None, lng=None, isMusic=False, onlySRT=False, addSRT=False, subBeg="0", subEnd=str(TRUNC_DURATION), maxDuration=MAX_DURATION, stretch=None, nbRun=1, remixFactor="0.3", speechnorm=True, max_line_width=80, max_line_count=2):
     pathIn = path
     pathClean = path
     pathNoCut = path
@@ -416,56 +416,68 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
                and not whisperVersion == "-v3"
                ):
             if(pathREMIXN is not None):
-                resultSRT = transcribeMARK(pathREMIXN, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
-                                           nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
-                
-                weird_word_count_1 = count_weird_words(resultSRT["srt"])
-                weird_word_count_threshold = 2
-                # special case for Vietnamese
-                if lngInput.lower() == 'vi' and weird_word_count_1 > weird_word_count_threshold:
-                    logger.info("Vietnamese special case")
-                    logger.info(f"weird_word_count_1 = {weird_word_count_1}")
-                    resultSRT2 = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
-                                               nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)   
-                    weird_word_count_2 = count_weird_words(resultSRT2["srt"])
-                    logger.info(f"weird_word_count_2 = {weird_word_count_2}")
-                    if weird_word_count_2 < weird_word_count_1:
-                        resultSRT = resultSRT2
-                    if weird_word_count_2 > weird_word_count_threshold:
-                        if "SILCUT" not in pathIn:
-                            resultSRT3 = transcribeMARK(pathIn, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
-                                                nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
-                        else:
-                            resultSRT3 = resultSRT2
-                        
-                        weird_word_count_3 = count_weird_words(resultSRT3["srt"])
-                        logger.info(f"weird_word_count_3 = {weird_word_count_3}")
-                        if weird_word_count_3 < weird_word_count_2:
-                            resultSRT = resultSRT3
-                        if weird_word_count_3 > weird_word_count_threshold:
-                            if "SILCUT" not in pathIn:
-                                resultSRT4 = transcribe_with_gladia(pathIn, lngInput, opts["language"])
-                            else:
-                                resultSRT4 = transcribe_with_gladia(pathREMIXN, lngInput, opts["language"])
-                            
-                            resultSRT4 = json.loads(resultSRT4)
-                            weird_word_count_4 = count_weird_words(resultSRT4["text"])
-                            logger.info(f"weird_word_count_4 = {weird_word_count_4}")
-                            if weird_word_count_4 < weird_word_count_3:
-                                resultSRT = resultSRT4
-                            if weird_word_count_4 > weird_word_count_threshold:
-                                resultSRT5 = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                if lngInput != lng:
+                    resultSRT = transcribe_with_gladia(pathREMIXN, lngInput, lng)
+                else:
+                    resultSRT = transcribeMARK(pathREMIXN, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                             nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
-                                weird_word_count_5 = count_weird_words(resultSRT5["srt"])
-                                logger.info(f"weird_word_count_5 = {weird_word_count_5}")
-                                if weird_word_count_5 < weird_word_count_4:
-                                    resultSRT = resultSRT5
+                    
+                    weird_word_count_1 = count_weird_words(resultSRT["srt"])
+                    weird_word_count_threshold = 2
+                    # special case for Vietnamese
+                    if lngInput.lower() == 'vi' and weird_word_count_1 > weird_word_count_threshold:
+                        logger.info("Vietnamese special case")
+                        logger.info(f"weird_word_count_1 = {weird_word_count_1}")
+                        resultSRT2 = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                                                nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)   
+                        weird_word_count_2 = count_weird_words(resultSRT2["srt"])
+                        logger.info(f"weird_word_count_2 = {weird_word_count_2}")
+                        if weird_word_count_2 < weird_word_count_1:
+                            resultSRT = resultSRT2
+                        if weird_word_count_2 > weird_word_count_threshold:
+                            if "SILCUT" not in pathIn:
+                                resultSRT3 = transcribeMARK(pathIn, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                                                    nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                            else:
+                                resultSRT3 = resultSRT2
+                            
+                            weird_word_count_3 = count_weird_words(resultSRT3["srt"])
+                            logger.info(f"weird_word_count_3 = {weird_word_count_3}")
+                            if weird_word_count_3 < weird_word_count_2:
+                                resultSRT = resultSRT3
+                            if weird_word_count_3 > weird_word_count_threshold:
+                                if "SILCUT" not in pathIn:
+                                    resultSRT4 = transcribe_with_gladia(pathIn, lngInput, opts["language"])
+                                else:
+                                    resultSRT4 = transcribe_with_gladia(pathREMIXN, lngInput, opts["language"])
+                                
+                                resultSRT4 = json.loads(resultSRT4)
+                                weird_word_count_4 = count_weird_words(resultSRT4["text"])
+                                logger.info(f"weird_word_count_4 = {weird_word_count_4}")
+                                if weird_word_count_4 < weird_word_count_3:
+                                    resultSRT = resultSRT4
+                                if weird_word_count_4 > weird_word_count_threshold:
+                                    resultSRT5 = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                                                nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                                    weird_word_count_5 = count_weird_words(resultSRT5["srt"])
+                                    logger.info(f"weird_word_count_5 = {weird_word_count_5}")
+                                    if weird_word_count_5 < weird_word_count_4:
+                                        resultSRT = resultSRT5
             else:
                 resultSRT = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                            nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
         else:
             resultSRT = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                        nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+        
+        # Add this check and conversion after getting resultSRT
+        if isinstance(resultSRT, str):
+            try:
+                resultSRT = json.loads(resultSRT)
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse resultSRT as JSON: {resultSRT}")
+                resultSRT = {"text": "", "srt": "", "json": []}
+        
         # Ensure resultSRT is a dictionary before accessing its keys
         if isinstance(resultSRT, dict):
             result = {
@@ -478,7 +490,7 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
             logger.error(f"resultSRT = {resultSRT}")
             result = {
                 "srt": "",
-                "text": resultSRT.get("text", ""),
+                "text": str(resultSRT),  # Convert to string if not already
                 "json": []
             }
     else:
@@ -757,7 +769,7 @@ import requests
 def transcribe_with_gladia(audio_path, source_lang, target_lang):
     upload_url = "https://api.gladia.io/v2/upload"
     transcribe_url = "https://api.gladia.io/v2/pre-recorded"
-    
+    logger.info(f"transcribe_with_gladia(): {audio_path}, {source_lang}, {target_lang}")
     # Get API key from environment variable
     api_key = os.getenv('GLADIA_API_KEY')
     if not api_key:
@@ -793,7 +805,7 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
             "audio_url": audio_url,
             "detect_language": True,
             "language": source_lang,
-            "translation": True,
+            "translation": False,
             "translation_config": {
                 "target_languages": [target_lang],
                 "model": "base",
@@ -813,7 +825,7 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
             
             # Step 3: Fetch the result with Fibonacci backoff polling
             def fibonacci():
-                a, b = 1, 1
+                a, b = 13, 21
                 while True:
                     yield a
                     a, b = b, a + b

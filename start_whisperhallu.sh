@@ -36,6 +36,7 @@ stop_service() {
     if [ -f $PID_FILE ]; then
         echo "Stopping WhisperHallu service..."
         kill $(cat $PID_FILE)
+        pkill -f whisperhallu_server.py
         rm $PID_FILE
         echo "Service stopped"
     else
