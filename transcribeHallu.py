@@ -96,6 +96,24 @@ TRUNC_DURATION = MAX_DURATION
 from threading import Lock, Thread
 lock = Lock()
 
+# Add at the top of the file, after the imports
+import logging
+from datetime import datetime
+
+# Set up logging
+log_dir = "./logs"
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, f"transcribehallu_{datetime.now().strftime('%Y%m%d')}.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 def loadModel(gpu: str,modelSize=None):
     global model
     global device
@@ -108,7 +126,7 @@ def loadModel(gpu: str,modelSize=None):
                 modelPath = "whisper-large-ct2/"
             else:
                 modelPath = "whisper-medium-ct2/"
-            print("LOADING: "+modelPath+" GPU: "+gpu+" BS: "+str(beam_size)+" PTC="+str(patience)+" TEMP="+str(temperature))
+            logger.info(f"Loading model: {modelPath} GPU: {gpu} BS: {beam_size} PTC: {patience} TEMP: {temperature}")
             compute_type="float16"# float16 int8_float16 int8
             model = WhisperModel(modelPath, device=device,device_index=int(gpu), compute_type=compute_type)
         elif whisperFound == "STD":
@@ -116,16 +134,16 @@ def loadModel(gpu: str,modelSize=None):
                 modelSize="medium"#"tiny"#"medium" #"large"
             if(modelSize == "large"):
                 modelSize = "large"+whisperVersion #"large-v1" "large-v2" "large-v3"
-            print("LOADING: "+modelSize+" GPU:"+gpu+" BS: "+str(beam_size)+" PTC="+str(patience)+" TEMP="+str(temperature))
+            logger.info(f"Loading model: {modelSize} GPU: {gpu} BS: {beam_size} PTC: {patience} TEMP: {temperature}")
             model = whisper.load_model(modelSize,device=torch.device("cuda:"+gpu)) #May be "cpu"
         elif whisperFound == "SM4T":
-            print("LOADING: "+"seamlessM4T_large"+" GPU:"+gpu)
+            logger.info(f"Loading model: seamlessM4T_large GPU: {gpu}")
             model = Translator("seamlessM4T_large", "vocoder_36langs", torch.device("cuda:"+gpu), torch.float16)
-        print("LOADED")
+        logger.info("Model loaded successfully")
         whisperLoaded = modelSize
     except Exception as e:
-        print("Can't load Whisper model: "+whisperFound+"/"+modelSize)
-        print(e)
+        logger.error(f"Failed to load Whisper model: {whisperFound}/{modelSize}")
+        logger.error(str(e))
         sys.exit(-1)
 
 def loadedModel():
@@ -198,7 +216,7 @@ def transcribePrompt(path: str, lng: str, prompt=None, lngInput=None, isMusic=Fa
 
     if lngInput is None:
         lngInput = lng
-        print("Using output language as input language: " + lngInput)
+        logger.info(f"Using output language as input language: {lngInput}")
     
     if prompt is None:
         if not isMusic:
@@ -206,11 +224,11 @@ def transcribePrompt(path: str, lng: str, prompt=None, lngInput=None, isMusic=Fa
         else:
             prompt = ""
     
-    print("=====transcribePrompt", flush=True)
-    print("PATH=" + path, flush=True)
-    print("LNGINPUT=" + lngInput, flush=True)
-    print("LNG=" + lng, flush=True)
-    print("PROMPT=" + prompt, flush=True)
+    logger.info("=====transcribePrompt=====")
+    logger.info(f"PATH: {path}")
+    logger.info(f"LNGINPUT: {lngInput}")
+    logger.info(f"LNG: {lng}")
+    logger.info(f"PROMPT: {prompt}")
     
     opts = dict(language=lng, initial_prompt=prompt, word_timestamps=True)
     return transcribeOpts(path, opts, lngInput, isMusic=isMusic, addSRT=addSRT, subEnd=truncDuration, maxDuration=maxDuration)
@@ -231,16 +249,16 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
         #Convert to WAV to avoid later possible decoding problem
         pathWAV = pathIn+".WAV"+".wav"
         aCmd = "ffmpeg -y"+" -i \""+pathIn+"\""+" -ss "+subBeg+" -to "+subEnd + " -c:a pcm_s16le -ar "+str(SAMPLING_RATE)+" \""+pathWAV+"\" > \""+pathWAV+".log\" 2>&1"
-        print("CMD: "+aCmd)
+        logger.info(f"CMD: {aCmd}")
         os.system(aCmd)
         duration = getDuration(pathWAV+".log")
-        print("T=",(time.time()-startTime))
-        print("DURATION="+str(duration)+" subBeg="+str(subBeg)+" subEnd="+str(subEnd))
-        print("PATH="+pathWAV,flush=True)
+        logger.info(f"T={(time.time()-startTime)}")
+        logger.info(f"DURATION={str(duration)} subBeg={str(subBeg)} subEnd={str(subEnd)}")
+        logger.info(f"PATH={pathWAV}")
         pathIn = pathClean = pathWAV
     except Exception as e:
-         print("Warning: can't convert to WAV")
-         print(e)
+         logger.error("Warning: can't convert to WAV")
+         logger.error(str(e))
 
     try:
         if(stretch != None):
@@ -253,29 +271,29 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
             #aCmd = "soundstretch \""+pathIn+"\""+" \""+pathSTRETCH+"\" -tempo="+str(int(100*float(stretch)) - 100)+" > \""+pathSTRETCH+".log\" 2>&1"
             #rubberband STRECH
             #aCmd = "rubberband \""+pathIn+"\""+" \""+pathSTRETCH+"\" --tempo "+stretch+" > \""+pathSTRETCH+".log\" 2>&1"
-            print("CMD: "+aCmd)
+            logger.info(f"CMD: {aCmd}")
             os.system(aCmd)
-            print("T=",(time.time()-startTime))
-            print("PATH="+pathWAV,flush=True)
+            logger.info(f"T={(time.time()-startTime)}")
+            logger.info(f"PATH={pathWAV}")
             pathIn = pathClean = pathWAV = pathSTRETCH
     except Exception as e:
-         print("Warning: can't STRETCH")
-         print(e)
+         logger.error("Warning: can't STRETCH")
+         logger.error(str(e))
 
     startTime = time.time()
     try:
         #Check for duration
         aCmd = "ffmpeg -y -i \""+pathIn+"\" "+ " -f null - > \""+pathIn+".dur\" 2>&1"
-        print("CMD: "+aCmd)
+        logger.info(f"CMD: {aCmd}")
         os.system(aCmd)
-        print("T=",(time.time()-startTime))
+        logger.info(f"T={(time.time()-startTime)}")
         duration = getDuration(pathIn+".dur")
-        print("DURATION="+str(duration)+" max "+str(maxDuration))
+        logger.info(f"DURATION={str(duration)} max {str(maxDuration)}")
         if(duration > maxDuration):
             return "[Too long ("+str(duration)+"s)]"
     except Exception as e:
-         print("Warning: can't analyze duration")
-         print(e)
+         logger.error("Warning: can't analyze duration")
+         logger.error(str(e))
 
     try:
         if(useSpleeter):
@@ -285,12 +303,12 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
                 os.mkdir(spleeterDir)
             pathSpleeter=spleeterDir+"/"+os.path.splitext(os.path.basename(pathIn))[0]+"/vocals.wav"
             separator.separate_to_file(pathIn, spleeterDir)
-            print("T=",(time.time()-startTime))
-            print("PATH="+pathSpleeter,flush=True)
+            logger.info(f"T={(time.time()-startTime)}")
+            logger.info(f"PATH={pathSpleeter}")
             pathNoCut = pathIn = pathSpleeter
     except Exception as e:
-         print("Warning: can't split vocals")
-         print(e)
+         logger.error("Warning: can't split vocals")
+         logger.error(str(e))
     
     if(useDemucs):
         startTime = time.time()
@@ -307,25 +325,25 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
             #print("CMD: "+aCmd)
             #os.system(aCmd)
             demucs_audio(pathIn=pathIn,model=modelDemucs,device="cuda:"+cudaIdx,pathVocals=pathDemucsVocals,pathOther=pathIn+".other.wav")
-            print("T=",(time.time()-startTime))
-            print("PATH="+pathDemucsVocals,flush=True)
+            logger.info(f"T={(time.time()-startTime)}")
+            logger.info(f"PATH={pathDemucsVocals}")
             pathNoCut = pathIn = pathDemucsVocals
         except Exception as e:
-             print("Warning: can't split vocals")
-             print(e)
+             logger.error("Warning: can't split vocals")
+             logger.error(str(e))
 
     startTime = time.time()
     try:
         pathSILCUT = pathIn+".SILCUT"+".wav"
         aCmd = "ffmpeg -y -i \""+pathIn+"\" -af \"silenceremove=start_periods=1:stop_periods=-1:start_threshold=-50dB:stop_threshold=-50dB:start_silence=0.2:stop_silence=0.2, loudnorm\" "+ " -c:a pcm_s16le -ar "+str(SAMPLING_RATE)+" \""+pathSILCUT+"\" > \""+pathSILCUT+".log\" 2>&1"
-        print("CMD: "+aCmd)
+        logger.info(f"CMD: {aCmd}")
         os.system(aCmd)
-        print("T=",(time.time()-startTime))
-        print("PATH="+pathSILCUT,flush=True)
+        logger.info(f"T={(time.time()-startTime)}")
+        logger.info(f"PATH={pathSILCUT}")
         pathIn = pathSILCUT
     except Exception as e:
-         print("Warning: can't filter blanks")
-         print(e)
+         logger.error("Warning: can't filter blanks")
+         logger.error(str(e))
     
     try:
         if(not isMusic and useSileroVAD):
@@ -336,12 +354,12 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
             #https://github.com/snakers4/silero-vad/blob/master/utils_vad.py#L161
             speech_timestamps = get_speech_timestamps(wav, modelVAD,threshold=0.5,min_silence_duration_ms=500, sampling_rate=SAMPLING_RATE)
             save_audio(pathVAD,collect_chunks(speech_timestamps, wav), sampling_rate=SAMPLING_RATE)
-            print("T=",(time.time()-startTime))
-            print("PATH="+pathVAD,flush=True)
+            logger.info(f"T={(time.time()-startTime)}")
+            logger.info(f"PATH={pathVAD}")
             pathIn = pathVAD
     except Exception as e:
-         print("Warning: can't filter noises")
-         print(e)
+         logger.error("Warning: can't filter noises")
+         logger.error(str(e))
 
     try:
         if(float(remixFactor) >= 1):
@@ -357,10 +375,10 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
                         #+ " -filter:a loudnorm"
                         +" -af \"speechnorm=e=50:r=0.0005:l=1\""
                         +" \""+pathNORM+"\" > \""+pathNORM+".log\" 2>&1")
-                print("CMD: "+aCmd)
+                logger.info(f"CMD: {aCmd}")
                 os.system(aCmd)
-                print("T=",(time.time()-startTime))
-                print("PATH="+pathNORM,flush=True)
+                logger.info(f"T={(time.time()-startTime)}")
+                logger.info(f"PATH={pathNORM}")
             else:
                 pathNORM = pathDemucsVocals
 
@@ -368,17 +386,17 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
             aCmd = ("ffmpeg -y -i \""+pathNORM+"\" -i \""+pathDemucsDrums+"\" -i \""+pathDemucsBass+"\" -i \""+pathDemucsOther+"\""
                     +" -filter_complex amix=inputs=4:duration=longest:dropout_transition=0:weights=\"1 "+remixFactor+" "+remixFactor+" "+remixFactor+"\""
                     +" \""+pathREMIXN+"\" > \""+pathREMIXN+".log\" 2>&1")
-            print("CMD: "+aCmd)
+            logger.info(f"CMD: {aCmd}")
             os.system(aCmd)
-            print("T=",(time.time()-startTime))
-            print("PATH="+pathREMIXN,flush=True)
+            logger.info(f"T={(time.time()-startTime)}")
+            logger.info(f"PATH={pathREMIXN}")
     except Exception as e:
-         print("Warning: can't remix")
-         print(e)
+         logger.error("Warning: can't remix")
+         logger.error(str(e))
 
     mode=1
     if(duration > 30):
-        print("NOT USING MARKS FOR DURATION > 30s")
+        logger.info("NOT USING MARKS FOR DURATION > 30s")
         mode=0
     
     startTime = time.time()
@@ -405,12 +423,12 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
                 weird_word_count_threshold = 2
                 # special case for Vietnamese
                 if lngInput.lower() == 'vi' and weird_word_count_1 > weird_word_count_threshold:
-                    print("Vietnamese special case")
-                    print("weird_word_count_1 = ", weird_word_count_1)
+                    logger.info("Vietnamese special case")
+                    logger.info(f"weird_word_count_1 = {weird_word_count_1}")
                     resultSRT2 = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                                nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)   
                     weird_word_count_2 = count_weird_words(resultSRT2["srt"])
-                    print("weird_word_count_2 = ", weird_word_count_2)
+                    logger.info(f"weird_word_count_2 = {weird_word_count_2}")
                     if weird_word_count_2 < weird_word_count_1:
                         resultSRT = resultSRT2
                     if weird_word_count_2 > weird_word_count_threshold:
@@ -421,7 +439,7 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
                             resultSRT3 = resultSRT2
                         
                         weird_word_count_3 = count_weird_words(resultSRT3["srt"])
-                        print("weird_word_count_3 = ", weird_word_count_3)
+                        logger.info(f"weird_word_count_3 = {weird_word_count_3}")
                         if weird_word_count_3 < weird_word_count_2:
                             resultSRT = resultSRT3
                         if weird_word_count_3 > weird_word_count_threshold:
@@ -432,14 +450,14 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
                             
                             resultSRT4 = json.loads(resultSRT4)
                             weird_word_count_4 = count_weird_words(resultSRT4["text"])
-                            print("weird_word_count_4 = ", weird_word_count_4)
+                            logger.info(f"weird_word_count_4 = {weird_word_count_4}")
                             if weird_word_count_4 < weird_word_count_3:
                                 resultSRT = resultSRT4
                             if weird_word_count_4 > weird_word_count_threshold:
                                 resultSRT5 = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                             nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
                                 weird_word_count_5 = count_weird_words(resultSRT5["srt"])
-                                print("weird_word_count_5 = ", weird_word_count_5)
+                                logger.info(f"weird_word_count_5 = {weird_word_count_5}")
                                 if weird_word_count_5 < weird_word_count_4:
                                     resultSRT = resultSRT5
             else:
@@ -456,8 +474,8 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
                 "json": resultSRT.get("json", [])
             }
         else:
-            print(f"Warning: resultSRT is not a dictionary. Type: {type(resultSRT)}")
-            print("resultSRT = ", resultSRT)
+            logger.error(f"Warning: resultSRT is not a dictionary. Type: {type(resultSRT)}")
+            logger.error(f"resultSRT = {resultSRT}")
             result = {
                 "srt": "",
                 "text": resultSRT.get("text", ""),
@@ -473,15 +491,15 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, isMusic=False, onlySRT=
     result["json"] = split_transcription(result["json"])
     
 
-    print("T=",(time.time()-initTime))
+    logger.info(f"T={(time.time()-initTime)}")
     if(len(result["text"]) > 0):
-        print("s/c=",(time.time()-initTime)/len(result["text"]))
-    print("c/s=",len(result["text"])/(time.time()-initTime))
+        logger.info(f"s/c={(time.time()-initTime)/len(result['text'])}")
+    logger.info(f"c/s={len(result['text'])/(time.time()-initTime)}")
     
     return json.dumps(result)
 
 def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isMusic=False, nbRun=1, max_line_width=80, max_line_count=2):
-    print("transcribeMARK(): "+path)
+    logger.info(f"transcribeMARK(): {path}")
     pathIn = path
     
     lng = opts["language"]
@@ -517,17 +535,17 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
         mark2 = mark
         
     if(mode == 0):
-        print("["+str(mode)+"] PATH="+pathIn,flush=True)
+        logger.info(f"[{mode}] PATH={pathIn}")
     else:
         try:
             if(mode != 3):
                 startTime = time.time()
                 pathMRK = pathIn+".MRK"+".wav"
                 aCmd = "ffmpeg -y -i "+mark1+" -i \""+pathIn+"\" -i "+mark2+" -filter_complex \"[0:a][1:a][2:a]concat=n=3:v=0:a=1[a]\" -map \"[a]\" -c:a pcm_s16le -ar "+str(SAMPLING_RATE)+" \""+pathMRK+"\" > \""+pathMRK+".log\" 2>&1"
-                print("CMD: "+aCmd)
+                logger.info(f"CMD: {aCmd}")
                 os.system(aCmd)
-                print("T=",(time.time()-startTime))
-                print("["+str(mode)+"] PATH="+pathMRK,flush=True)
+                logger.info(f"T={(time.time()-startTime)}")
+                logger.info(f"[{mode}] PATH={pathMRK}")
                 pathIn = pathMRK
             
             if(useCompressor
@@ -536,14 +554,14 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
                 startTime = time.time()
                 pathCPS = pathIn+".CPS"+".wav"
                 aCmd = "ffmpeg -y -i \""+pathIn+"\" -af \"speechnorm=e=50:r=0.0005:l=1\" "+ " -c:a pcm_s16le -ar "+str(SAMPLING_RATE)+" \""+pathCPS+"\" > \""+pathCPS+".log\" 2>&1"
-                print("CMD: "+aCmd)
+                logger.info(f"CMD: {aCmd}")
                 os.system(aCmd)
-                print("T=",(time.time()-startTime))
-                print("["+str(mode)+"] PATH="+pathCPS,flush=True)
+                logger.info(f"T={(time.time()-startTime)}")
+                logger.info(f"[{mode}] PATH={pathCPS}")
                 pathIn = pathCPS
         except Exception as e:
-             print("Warning: can't add markers")
-             print(e)
+             logger.error("Warning: can't add markers")
+             logger.error(str(e))
     
     def format_srt_text(text, max_width, max_lines):
         words = text.split()
@@ -586,7 +604,7 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
             result = {"text": "", "srt": "", "json": []}
             multiRes = ""
             for r in range(nbRun):
-                print("RUN: "+str(r))
+                logger.info(f"RUN: {r}")
                 segments, info = model.transcribe(pathIn,**transcribe_options)
                 resSegs = []
                 json_segments = []
@@ -654,7 +672,7 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
             multiRes = ""
             result = {"text": "", "srt": "", "json": []}
             for r in range(nbRun):
-                print("RUN: "+str(r))
+                logger.info(f"RUN: {r}")
                 whisper_result = model.transcribe(pathIn, **transcribe_options)
                 if(mode == 3):
                     srt_segments = []
@@ -681,10 +699,10 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
             if(nbRun > 1):
                 result["text"] = multiRes
         
-        print("T=",(time.time()-startTime))
-        print("TRANS="+result["text"],flush=True)
+        logger.info(f"T={(time.time()-startTime)}")
+        logger.info(f"TRANS={result['text']}")
     except Exception as e: 
-        print(e)
+        logger.error(str(e))
         traceback.print_exc()
         lock.release()
         result = {"text": "", "srt": "", "json": []}
@@ -743,7 +761,7 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
     # Get API key from environment variable
     api_key = os.getenv('GLADIA_API_KEY')
     if not api_key:
-        print("Error: GLADIA_API_KEY environment variable not set")
+        logger.error("GLADIA_API_KEY environment variable not set")
         return json.dumps({"text": "", "srt": "", "json": []})
 
     headers = {
@@ -753,13 +771,13 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
     try:
         # Step 1: Upload the file
         with open(audio_path, "rb") as audio_file:
-            print("audio_path: "+ audio_path)
+            logger.info(f"Uploading file to Gladia: {audio_path}")
             files = {"audio": (os.path.basename(audio_path), audio_file, "audio/mpeg")}
             upload_response = requests.post(upload_url, files=files, headers=headers)
         
         if upload_response.status_code != 200:
-            print(f"Error uploading file: {upload_response.status_code}")
-            print(upload_response.text)
+            logger.error(f"Error uploading file: {upload_response.status_code}")
+            logger.error(upload_response.text)
             return json.dumps({"text": "", "srt": "", "json": []})
 
         upload_result = upload_response.json()
@@ -816,19 +834,19 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
                     else:
                         wait_time = next(fib)
                         total_wait_time += wait_time
-                        print(f"Gladia result not ready. Status: {gladia_result.get('status')}. Waiting {wait_time} seconds... (Total wait: {total_wait_time}s)")
+                        logger.info(f"Gladia result not ready. Status: {gladia_result.get('status')}. Waiting {wait_time} seconds... (Total wait: {total_wait_time}s)")
                         time.sleep(wait_time)
                 else:
-                    print(f"Error fetching result from Gladia API: {result_response.status_code}")
-                    print(result_response.text)
+                    logger.error(f"Error fetching result from Gladia API: {result_response.status_code}")
+                    logger.error(result_response.text)
                     return json.dumps({"text": "", "srt": "", "json": []})
 
-            print(f"Max wait time ({max_wait_time}s) reached. Gladia result not ready.")
+            logger.info(f"Max wait time ({max_wait_time}s) reached. Gladia result not ready.")
             return json.dumps({"text": "", "srt": "", "json": []})
         else:
-            print(f"Error requesting transcription from Gladia API: {transcribe_response.status_code}")
-            print(transcribe_response.text)
+            logger.error(f"Error requesting transcription from Gladia API: {transcribe_response.status_code}")
+            logger.error(transcribe_response.text)
             return json.dumps({"text": "", "srt": "", "json": []})
     except requests.exceptions.RequestException as e:
-        print(f"Error connecting to Gladia API: {e}")
+        logger.error(f"Error connecting to Gladia API: {str(e)}")
         return json.dumps({"text": "", "srt": "", "json": []})
