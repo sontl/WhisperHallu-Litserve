@@ -103,8 +103,10 @@ class WhisperHalluAPI(ls.LitAPI):
         try:
             logger.info(f"Starting transcription for file: {request_data['file_path']}")
             file_path = request_data["file_path"]
-            lng = request_data.get("lng", "en")
+            
             lng_input = request_data.get("lng_input", "en")
+            # lng = request_data.get("lng", "en")
+            lng = lng_input # fixed this because we use AI to translate later after transcription
 
             # Set up transcription parameters
             isMusic = True
