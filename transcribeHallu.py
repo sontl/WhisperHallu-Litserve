@@ -766,7 +766,7 @@ import requests
 def transcribe_with_gladia(audio_path, source_lang, target_lang):
     upload_url = "https://api.gladia.io/v2/upload"
     transcribe_url = "https://api.gladia.io/v2/pre-recorded"
-    logger.info(f"transcribe_with_gladia(): {audio_path}, {source_lang}, {target_lang}")
+    # logger.info(f"transcribe_with_gladia(): {audio_path}, {source_lang}, {target_lang}")
     # Get API key from environment variable
     api_key = os.getenv('GLADIA_API_KEY')
     if not api_key:
