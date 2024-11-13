@@ -1,5 +1,46 @@
 import json
 
+def _get_utterances(gladia_response, is_translation_empty):
+    """Helper function to extract utterances from the response"""
+    if not is_translation_empty:
+        translation_results = gladia_response.get("translation", {}).get("results", {})[0]
+        return translation_results.get("utterances", [])
+    return gladia_response.get("transcription", {}).get("utterances", [])
+
+def _create_json_segment(utterance):
+    """Helper function to create a JSON segment from an utterance"""
+    json_segment = {
+        "start": utterance.get("start", 0),
+        "end": utterance.get("end", 0),
+        "sentence": utterance.get("text", "").strip(),
+        "words": []
+    }
+    
+    for word in utterance.get("words", []):
+        json_segment["words"].append({
+            "start": word.get("start", 0),
+            "end": word.get("end", 0),
+            "text": word.get("word", "").strip()
+        })
+    
+    return json_segment
+
+def _get_text_and_srt(gladia_response, is_translation_empty):
+    """Helper function to extract text and srt from the response"""
+    if is_translation_empty:
+        transcription = gladia_response.get("transcription", {})
+        return {
+            "text": transcription.get("full_transcript", ""),
+            "srt": transcription.get("subtitles", [])[0].get("subtitles", "")
+        }
+    
+    translation_results = gladia_response.get("translation", {}).get("results", {})[0]
+    subtitles = translation_results.get("subtitles", [])
+    return {
+        "text": translation_results.get("full_transcript", ""),
+        "srt": subtitles[0].get("subtitles", "") if subtitles else ""
+    }
+
 def convert_gladia_to_internal_format(gladia_response):
     result = {
         "text": "",
@@ -7,42 +48,17 @@ def convert_gladia_to_internal_format(gladia_response):
         "json": []
     }
 
-    # Extract full transcript
     gladia_response = gladia_response.get("result", {})
-    
+    is_translation_empty = True
+    # Get utterances and process them
+    utterances = _get_utterances(gladia_response, is_translation_empty)
+    result["json"] = [_create_json_segment(utterance) for utterance in utterances]
 
-    # Extract and format JSON data
-    is_translation_empty = gladia_response.get("translation", {}).get("is_empty", False)
-    if is_translation_empty:
-        utterances = gladia_response.get("transcription", {}).get("utterances", [])
-    else:
-        translation_results = gladia_response.get("translation", {}).get("results", {})[0]
-        utterances = translation_results.get("utterances", [])
-   
-    for utterance in utterances:
-        json_segment = {
-            "start": utterance.get("start", 0),
-            "end": utterance.get("end", 0),
-            "sentence": utterance.get("text", "").strip(),
-            "words": []
-        }
-        
-        for word in utterance.get("words", []):
-            json_segment["words"].append({
-                "start": word.get("start", 0),
-                "end": word.get("end", 0),
-                "text": word.get("word", "").strip()
-            })
-        
-        result["json"].append(json_segment)
-    if is_translation_empty:
-        result["text"] = gladia_response.get("transcription", {}).get("full_transcript", "")
-        result["srt"] = gladia_response.get("transcription", {}).get("subtitles", [])[0].get("subtitles", "")
-    else:
-        translation_results = gladia_response.get("translation", {}).get("results", {})[0]
-        result["text"] = translation_results.get("full_transcript", "")
-        subtitles = translation_results.get("subtitles", [])
-        result["srt"] = subtitles[0].get("subtitles", "") if subtitles else ""
+    # Get text and srt
+    text_and_srt = _get_text_and_srt(gladia_response, is_translation_empty)
+    result["text"] = text_and_srt["text"]
+    result["srt"] = text_and_srt["srt"]
+
     return result
 
 def split_sentence(sentence, words):
