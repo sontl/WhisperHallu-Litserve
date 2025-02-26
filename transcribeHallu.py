@@ -416,53 +416,55 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, lng=None, isMusic=False
                and not whisperVersion == "-v3"
                ):
             if(pathREMIXN is not None):
-                resultSRT = transcribeMARK(pathREMIXN, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
-                                        nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                resultSRT = transcribe_with_gladia(pathREMIXN, lngInput, opts["language"])
+                # resultSRT = transcribeMARK(pathREMIXN, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                #                         nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
                 
-                weird_word_count_1 = count_weird_words(resultSRT["srt"])
-                weird_word_count_threshold = 2
+                # weird_word_count_1 = count_weird_words(resultSRT["srt"])
+                # weird_word_count_threshold = 2
                 # special case for Vietnamese
-                if lngInput.lower() == 'vi' and weird_word_count_1 > weird_word_count_threshold:
-                    logger.info("Vietnamese special case")
-                    logger.info(f"weird_word_count_1 = {weird_word_count_1}")
-                    resultSRT2 = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
-                                            nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)   
-                    weird_word_count_2 = count_weird_words(resultSRT2["srt"])
-                    logger.info(f"weird_word_count_2 = {weird_word_count_2}")
-                    if weird_word_count_2 < weird_word_count_1:
-                        resultSRT = resultSRT2
-                    if weird_word_count_2 > weird_word_count_threshold:
-                        if "SILCUT" not in pathIn:
-                            resultSRT3 = transcribeMARK(pathIn, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
-                                                nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
-                        else:
-                            resultSRT3 = resultSRT2
+                # if lngInput.lower() == 'vi' and weird_word_count_1 > weird_word_count_threshold:
+                #     logger.info("Vietnamese special case")
+                #     logger.info(f"weird_word_count_1 = {weird_word_count_1}")
+                #     resultSRT2 = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                #                             nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)   
+                #     weird_word_count_2 = count_weird_words(resultSRT2["srt"])
+                #     logger.info(f"weird_word_count_2 = {weird_word_count_2}")
+                #     if weird_word_count_2 < weird_word_count_1:
+                #         resultSRT = resultSRT2
+                #     if weird_word_count_2 > weird_word_count_threshold:
+                #         if "SILCUT" not in pathIn:
+                #             resultSRT3 = transcribeMARK(pathIn, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                #                                 nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                #         else:
+                #             resultSRT3 = resultSRT2
                         
-                        weird_word_count_3 = count_weird_words(resultSRT3["srt"])
-                        logger.info(f"weird_word_count_3 = {weird_word_count_3}")
-                        if weird_word_count_3 < weird_word_count_2:
-                            resultSRT = resultSRT3
-                        if weird_word_count_3 > weird_word_count_threshold:
-                            if "SILCUT" not in pathIn:
-                                resultSRT4 = transcribe_with_gladia(pathIn, lngInput, opts["language"])
-                            else:
-                                resultSRT4 = transcribe_with_gladia(pathREMIXN, lngInput, opts["language"])
+                #         weird_word_count_3 = count_weird_words(resultSRT3["srt"])
+                #         logger.info(f"weird_word_count_3 = {weird_word_count_3}")
+                #         if weird_word_count_3 < weird_word_count_2:
+                #             resultSRT = resultSRT3
+                #         if weird_word_count_3 > weird_word_count_threshold:
+                #             if "SILCUT" not in pathIn:
+                #                 resultSRT4 = transcribe_with_gladia(pathIn, lngInput, opts["language"])
+                #             else:
+                #                 resultSRT4 = transcribe_with_gladia(pathREMIXN, lngInput, opts["language"])
                             
-                            resultSRT4 = json.loads(resultSRT4)
-                            weird_word_count_4 = count_weird_words(resultSRT4["text"])
-                            logger.info(f"weird_word_count_4 = {weird_word_count_4}")
-                            if weird_word_count_4 < weird_word_count_3:
-                                resultSRT = resultSRT4
-                            if weird_word_count_4 > weird_word_count_threshold:
-                                resultSRT5 = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
-                                            nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
-                                weird_word_count_5 = count_weird_words(resultSRT5["srt"])
-                                logger.info(f"weird_word_count_5 = {weird_word_count_5}")
-                                if weird_word_count_5 < weird_word_count_4:
-                                    resultSRT = resultSRT5
+                #             resultSRT4 = json.loads(resultSRT4)
+                #             weird_word_count_4 = count_weird_words(resultSRT4["text"])
+                #             logger.info(f"weird_word_count_4 = {weird_word_count_4}")
+                #             if weird_word_count_4 < weird_word_count_3:
+                #                 resultSRT = resultSRT4
+                #             if weird_word_count_4 > weird_word_count_threshold:
+                #                 resultSRT5 = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                #                             nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                #                 weird_word_count_5 = count_weird_words(resultSRT5["srt"])
+                #                 logger.info(f"weird_word_count_5 = {weird_word_count_5}")
+                #                 if weird_word_count_5 < weird_word_count_4:
+                #                     resultSRT = resultSRT5
             else:
-                resultSRT = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
-                                           nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                # resultSRT = transcribeMARK(pathClean, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
+                #                            nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
+                resultSRT = transcribe_with_gladia(pathClean, lngInput, opts["language"])
         else:
             resultSRT = transcribeMARK(pathNoCut, opts, mode=3, lngInput=lngInput, isMusic=isMusic,
                                        nbRun=nbRun, max_line_width=max_line_width, max_line_count=max_line_count)
