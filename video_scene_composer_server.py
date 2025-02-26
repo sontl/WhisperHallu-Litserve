@@ -9,6 +9,8 @@ from starlette.middleware.cors import CORSMiddleware
 from moviepy.editor import VideoFileClip, ImageClip, AudioFileClip, concatenate_videoclips
 import logging
 from datetime import datetime
+import concurrent.futures
+import subprocess
 
 # Set up logging
 log_dir = "./logs"
@@ -74,76 +76,7 @@ class VideoSceneComposerAPI(ls.LitAPI):
             # Sort scenes by start time to ensure proper ordering
             scenes = sorted(scenes, key=lambda x: x.get("startTime", 0))
             
-            # Download and process each scene's media
-            scene_clips = []
-            for i, scene in enumerate(scenes):
-                try:
-                    media_item = scene.get("mediaItem")
-                    if not media_item or not media_item.get("url"):
-                        logger.warning(f"Scene {i} has no media item or URL, skipping")
-                        continue
-                    
-                    media_url = media_item.get("url")
-                    media_type = media_item.get("type", "").lower()
-                    start_time = scene.get("startTime", 0)
-                    end_time = scene.get("endTime", 0)
-                    
-                    if end_time <= start_time:
-                        logger.warning(f"Scene {i} has invalid timing (start: {start_time}, end: {end_time}), skipping")
-                        continue
-                    
-                    # Download the media file
-                    media_ext = os.path.splitext(media_url)[1].lower() or ".mp4"
-                    if not media_ext.startswith("."):
-                        media_ext = "." + media_ext
-                    
-                    media_path = os.path.join(temp_dir, f"scene_{i}{media_ext}")
-                    logger.info(f"Downloading media for scene {i} from {media_url}")
-                    
-                    response = requests.get(media_url, stream=True)
-                    response.raise_for_status()
-                    
-                    with open(media_path, "wb") as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    
-                    # Create clip based on media type
-                    if media_type == "image":
-                        # For images, create a static clip with the specified duration
-                        duration = end_time - start_time  # Already in seconds
-                        logger.info(f"Creating image clip for scene {i} from {media_path} with duration {duration}s")
-                        clip = ImageClip(media_path, duration=duration)
-                        clip = clip.resize(width=width, height=height, resample='bicubic')
-                    else:
-                        # For videos, extract the portion between start and end times
-                        logger.info(f"Creating video clip for scene {i} from {media_path}")
-                        video_clip = VideoFileClip(media_path)
-                        
-                        # Calculate subclip times
-                        clip_duration = end_time - start_time
-                        # If the video is shorter than the requested duration, loop it
-                        if video_clip.duration < clip_duration:
-                            logger.info(f"Video clip is shorter than requested duration. Video: {video_clip.duration}s, Requested: {clip_duration}s")
-                            # Use the entire video clip
-                            clip = video_clip.resize(width=width, height=height)
-                            # Set the duration to match the requested duration
-                            clip = clip.set_duration(clip_duration)
-                        else:
-                            # Use the specified portion of the video
-                            clip = video_clip.subclip(0, clip_duration)
-                            clip = clip.resize(width=width, height=height)
-                    
-                    scene_clips.append(clip)
-                    logger.info(f"Processed scene {i}: duration {clip.duration}s")
-                    
-                except Exception as e:
-                    logger.error(f"Error processing scene {i}: {str(e)}")
-                    # Continue with other scenes even if one fails
-            
-            if not scene_clips:
-                raise HTTPException(status_code=400, detail="No valid scenes could be processed.")
-            
-            # Download the audio file
+            # Download the audio file first
             audio_url = song.get("audioUrl")
             audio_path = os.path.join(temp_dir, "audio.mp3")
             logger.info(f"Downloading audio from {audio_url}")
@@ -155,39 +88,163 @@ class VideoSceneComposerAPI(ls.LitAPI):
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-            # Create the audio clip
-            audio_clip = AudioFileClip(audio_path)
+            # Process each scene and create a list of input files for ffmpeg
+            scene_files = []
+            concat_file_content = []
             
-            # Concatenate all clips in sequence
-            logger.info(f"Concatenating {len(scene_clips)} clips")
-            final_clip = concatenate_videoclips(scene_clips, method="compose")
+            def process_scene(scene_data):
+                i, scene = scene_data
+                try:
+                    media_item = scene.get("mediaItem")
+                    if not media_item or not media_item.get("url"):
+                        logger.warning(f"Scene {i} has no media item or URL, skipping")
+                        return None
+                    
+                    media_url = media_item.get("url")
+                    media_type = media_item.get("type", "").lower()
+                    start_time = scene.get("startTime", 0)
+                    end_time = scene.get("endTime", 0)
+                    
+                    if end_time <= start_time:
+                        logger.warning(f"Scene {i} has invalid timing (start: {start_time}, end: {end_time}), skipping")
+                        return None
+                    
+                    # Download the media file
+                    media_ext = os.path.splitext(media_url)[1].lower() or ".mp4"
+                    if not media_ext.startswith("."):
+                        media_ext = "." + media_ext
+                    
+                    media_path = os.path.join(temp_dir, f"scene_{i}_original{media_ext}")
+                    processed_path = os.path.join(temp_dir, f"scene_{i}_processed.mp4")
+                    
+                    logger.info(f"Downloading media for scene {i} from {media_url}")
+                    
+                    response = requests.get(media_url, stream=True)
+                    response.raise_for_status()
+                    
+                    with open(media_path, "wb") as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    
+                    # Process based on media type
+                    clip_duration = end_time - start_time
+                    
+                    if media_type == "image":
+                        # For images, use ffmpeg to create a video from the image
+                        logger.info(f"Creating video from image for scene {i} with duration {clip_duration}s")
+                        
+                        ffmpeg.input(media_path, loop=1, t=clip_duration).filter(
+                            'scale', width, height
+                        ).output(
+                            processed_path, 
+                            vcodec='libx264', 
+                            pix_fmt='yuv420p', 
+                            r=fps,
+                            preset='ultrafast'
+                        ).run(overwrite_output=True, quiet=True)
+                        
+                    else:
+                        # For videos, extract the portion between start and end times
+                        logger.info(f"Processing video for scene {i} with duration {clip_duration}s")
+                        
+                        # Get video info
+                        probe = ffmpeg.probe(media_path)
+                        video_info = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
+                        
+                        if video_info:
+                            video_duration = float(video_info.get('duration', 0))
+                            
+                            if video_duration < clip_duration:
+                                # If video is shorter than needed, we need to loop it
+                                logger.info(f"Video is shorter than needed duration. Looping video.")
+                                
+                                # Create a temporary file with the video repeated multiple times
+                                temp_concat_file = os.path.join(temp_dir, f"concat_{i}.txt")
+                                repeats = int(clip_duration / video_duration) + 1
+                                
+                                with open(temp_concat_file, 'w') as f:
+                                    for _ in range(repeats):
+                                        f.write(f"file '{media_path}'\n")
+                                
+                                # Concatenate the repeated videos and then cut to exact duration
+                                ffmpeg.input(temp_concat_file, format='concat', safe=0).output(
+                                    processed_path,
+                                    t=clip_duration,
+                                    vcodec='libx264',
+                                    preset='ultrafast',
+                                    r=fps,
+                                    s=f"{width}x{height}"
+                                ).run(overwrite_output=True, quiet=True)
+                                
+                            else:
+                                # Just cut the video to the needed duration
+                                ffmpeg.input(media_path).output(
+                                    processed_path,
+                                    t=clip_duration,
+                                    vcodec='libx264',
+                                    preset='ultrafast',
+                                    r=fps,
+                                    s=f"{width}x{height}"
+                                ).run(overwrite_output=True, quiet=True)
+                        else:
+                            logger.warning(f"Could not get video info for scene {i}")
+                            return None
+                    
+                    return {
+                        "index": i,
+                        "path": processed_path,
+                        "duration": clip_duration
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Error processing scene {i}: {str(e)}")
+                    return None
             
-            # Add the audio
-            final_clip = final_clip.set_audio(audio_clip)
+            # Process scenes in parallel
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(scenes))) as executor:
+                results = list(executor.map(process_scene, enumerate(scenes)))
             
-            # Set the duration to match the audio if needed
-            if final_clip.duration < audio_clip.duration:
-                logger.info(f"Setting final clip duration to match audio: {audio_clip.duration}s")
-                final_clip = final_clip.set_duration(audio_clip.duration)
+            # Filter out None results and sort by original index
+            processed_scenes = [r for r in results if r is not None]
+            processed_scenes.sort(key=lambda x: x["index"])
             
-            # Write the final video to a temporary file
+            if not processed_scenes:
+                raise HTTPException(status_code=400, detail="No valid scenes could be processed.")
+            
+            # Create a concat file for ffmpeg
+            concat_file = os.path.join(temp_dir, "concat.txt")
+            with open(concat_file, 'w') as f:
+                for scene in processed_scenes:
+                    f.write(f"file '{scene['path']}'\n")
+            
+            # Concatenate all videos and add audio
+            logger.info(f"Concatenating {len(processed_scenes)} clips and adding audio")
+            
+            # First concatenate the videos
+            temp_video_path = os.path.join(temp_dir, "temp_video_no_audio.mp4")
+            ffmpeg.input(concat_file, format='concat', safe=0).output(
+                temp_video_path,
+                c='copy'
+            ).run(overwrite_output=True, quiet=True)
+            
+            # Then add the audio - using a different approach with direct command construction
             output_path = os.path.join(temp_dir, "final_video.mp4")
-            logger.info(f"Writing final video to {output_path}")
             
-            final_clip.write_videofile(
-                output_path, 
-                fps=fps, 
-                codec="libx264", 
-                audio_codec="aac",
-                preset="medium",
-                threads=4
-            )
+            # Create the ffmpeg command as a list of arguments
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-i', temp_video_path,
+                '-i', audio_path,
+                '-c:v', 'copy',
+                '-c:a', 'aac',
+                '-shortest',
+                output_path,
+                '-y'  # Overwrite output file if it exists
+            ]
             
-            # Clean up the clips to free memory
-            final_clip.close()
-            audio_clip.close()
-            for clip in scene_clips:
-                clip.close()
+            # Run the command
+            logger.info(f"Running ffmpeg command: {' '.join(ffmpeg_cmd)}")
+            subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
             logger.info("Video composition completed successfully")
             return output_path
@@ -204,19 +261,19 @@ class VideoSceneComposerAPI(ls.LitAPI):
                 content = f.read()
             
             # Clean up temporary files
-            temp_dir = os.path.dirname(output_path)
-            for file in os.listdir(temp_dir):
-                file_path = os.path.join(temp_dir, file)
-                try:
-                    if os.path.isfile(file_path):
-                        os.unlink(file_path)
-                except Exception as e:
-                    logger.error(f"Error deleting file {file_path}: {str(e)}")
+            # temp_dir = os.path.dirname(output_path)
+            # for file in os.listdir(temp_dir):
+            #     file_path = os.path.join(temp_dir, file)
+            #     try:
+            #         if os.path.isfile(file_path):
+            #             os.unlink(file_path)
+            #     except Exception as e:
+            #         logger.error(f"Error deleting file {file_path}: {str(e)}")
             
-            try:
-                os.rmdir(temp_dir)
-            except Exception as e:
-                logger.error(f"Error removing temporary directory {temp_dir}: {str(e)}")
+            # try:
+            #     os.rmdir(temp_dir)
+            # except Exception as e:
+            #     logger.error(f"Error removing temporary directory {temp_dir}: {str(e)}")
             
             # Return the response with the correct media type
             return Response(content=content, media_type="video/mp4")
