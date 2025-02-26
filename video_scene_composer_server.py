@@ -261,19 +261,19 @@ class VideoSceneComposerAPI(ls.LitAPI):
                 content = f.read()
             
             # Clean up temporary files
-            # temp_dir = os.path.dirname(output_path)
-            # for file in os.listdir(temp_dir):
-            #     file_path = os.path.join(temp_dir, file)
-            #     try:
-            #         if os.path.isfile(file_path):
-            #             os.unlink(file_path)
-            #     except Exception as e:
-            #         logger.error(f"Error deleting file {file_path}: {str(e)}")
+            temp_dir = os.path.dirname(output_path)
+            for file in os.listdir(temp_dir):
+                file_path = os.path.join(temp_dir, file)
+                try:
+                    if os.path.isfile(file_path):
+                        os.unlink(file_path)
+                except Exception as e:
+                    logger.error(f"Error deleting file {file_path}: {str(e)}")
             
-            # try:
-            #     os.rmdir(temp_dir)
-            # except Exception as e:
-            #     logger.error(f"Error removing temporary directory {temp_dir}: {str(e)}")
+            try:
+                os.rmdir(temp_dir)
+            except Exception as e:
+                logger.error(f"Error removing temporary directory {temp_dir}: {str(e)}")
             
             # Return the response with the correct media type
             return Response(content=content, media_type="video/mp4")
