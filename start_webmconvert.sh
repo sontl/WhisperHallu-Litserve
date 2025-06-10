@@ -13,7 +13,7 @@ mkdir -p $LOG_DIR
 start_service() {
     echo "Starting WebM to MP4 conversion service..."
     # Start the process and save PID
-    nohup $PYTHON_ENV $APP_NAME >> "$LOG_DIR/nohup.$(date +%Y%m%d).out" 2>&1 & 
+    nohup $PYTHON_ENV $APP_NAME >> "$LOG_DIR/convert_webm_to_mp4.$(date +%Y%m%d).out" 2>&1 & 
     echo $! > $PID_FILE
     echo "Service started with PID $(cat $PID_FILE)"
 }

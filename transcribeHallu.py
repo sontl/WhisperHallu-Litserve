@@ -810,7 +810,7 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
                 "model": "base",
                 "match_original_utterances": True
             },
-            "diarization": True,
+            "diarization": False,
             "subtitles": True,
             "subtitles_config": {
                 "formats": ["srt"],
@@ -843,7 +843,8 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
                         formatted_result = convert_gladia_to_internal_format(gladia_result)
                         return json.dumps(formatted_result)
                     else:
-                        wait_time = next(fib)
+                        # wait_time = next(fib)
+                        wait_time = 3
                         total_wait_time += wait_time
                         logger.info(f"Gladia result not ready. Status: {gladia_result.get('status')}. Waiting {wait_time} seconds... (Total wait: {total_wait_time}s)")
                         time.sleep(wait_time)

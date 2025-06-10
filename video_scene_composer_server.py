@@ -28,25 +28,31 @@ logger = logging.getLogger(__name__)
 
 class VideoSceneComposerAPI(ls.LitAPI):
     def setup(self, device):
+        logger.info("Setting up VideoSceneComposerAPI")
         # No specific setup needed for this server
         pass
 
     def decode_request(self, request):
         try:
+            logger.info("Starting request decoding")
             # Get the JSON data from the request
             # Check if scenes are directly in the request
             if "scenes" in request:
+                logger.info("Found scenes directly in request")
                 project_data = request
             else:
                 # Fallback to check for project key for backward compatibility
+                logger.info("Checking for project key in request")
                 project_data = request.get("project", {})
                 if isinstance(project_data, str):
+                    logger.info("Converting project string to JSON")
                     project_data = json.loads(project_data)
             
             if not project_data.get("scenes"):
+                logger.error("No scenes found in request")
                 raise HTTPException(status_code=400, detail="No scenes found in the request.")
                 
-            logger.info(f"Received project with {len(project_data.get('scenes', []))} scenes")
+            logger.info(f"Successfully decoded request with {len(project_data.get('scenes', []))} scenes")
             return project_data
         except Exception as e:
             logger.error(f"Error decoding request: {str(e)}")
@@ -54,20 +60,27 @@ class VideoSceneComposerAPI(ls.LitAPI):
 
     def predict(self, project_data):
         try:
+            logger.info("Starting video prediction process")
             scenes = project_data.get("scenes", [])
             song = project_data.get("song")
             config = project_data.get("config", {})
+            caption_path = project_data.get("captionPath") or 'input/caption.mp4'
+            
+            logger.info(f"Processing {len(scenes)} scenes with config: {config}")
             
             if not scenes:
+                logger.error("No scenes found in project data")
                 raise HTTPException(status_code=400, detail="No scenes found in the project data.")
             
             if not song or not song.get("audioUrl"):
+                logger.error("No song or audio URL found in project data")
                 raise HTTPException(status_code=400, detail="No song or audio URL found in the project data.")
             
             # Get configuration parameters
             width = config.get("width", 1920)
             height = config.get("height", 1080)
             fps = config.get("fps", 30)
+            logger.info(f"Using video configuration: {width}x{height} @ {fps}fps")
             
             # Create a temporary directory for downloaded files
             temp_dir = tempfile.mkdtemp()
@@ -75,6 +88,7 @@ class VideoSceneComposerAPI(ls.LitAPI):
             
             # Sort scenes by start time to ensure proper ordering
             scenes = sorted(scenes, key=lambda x: x.get("startTime", 0))
+            logger.info(f"Sorted {len(scenes)} scenes by start time")
             
             # Download the audio file first
             audio_url = song.get("audioUrl")
@@ -87,6 +101,7 @@ class VideoSceneComposerAPI(ls.LitAPI):
             with open(audio_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
+            logger.info("Audio file downloaded successfully")
             
             # Process each scene and create a list of input files for ffmpeg
             scene_files = []
@@ -95,6 +110,7 @@ class VideoSceneComposerAPI(ls.LitAPI):
             def process_scene(scene_data):
                 i, scene = scene_data
                 try:
+                    logger.info(f"Processing scene {i}")
                     media_item = scene.get("mediaItem")
                     if not media_item or not media_item.get("url"):
                         logger.warning(f"Scene {i} has no media item or URL, skipping")
@@ -104,6 +120,8 @@ class VideoSceneComposerAPI(ls.LitAPI):
                     media_type = media_item.get("type", "").lower()
                     start_time = scene.get("startTime", 0)
                     end_time = scene.get("endTime", 0)
+                    
+                    logger.info(f"Scene {i} details: type={media_type}, start={start_time}, end={end_time}")
                     
                     if end_time <= start_time:
                         logger.warning(f"Scene {i} has invalid timing (start: {start_time}, end: {end_time}), skipping")
@@ -125,6 +143,7 @@ class VideoSceneComposerAPI(ls.LitAPI):
                     with open(media_path, "wb") as f:
                         for chunk in response.iter_content(chunk_size=8192):
                             f.write(chunk)
+                    logger.info(f"Media downloaded for scene {i}")
                     
                     # Process based on media type
                     clip_duration = end_time - start_time
@@ -142,6 +161,7 @@ class VideoSceneComposerAPI(ls.LitAPI):
                             r=fps,
                             preset='ultrafast'
                         ).run(overwrite_output=True, quiet=True)
+                        logger.info(f"Image to video conversion completed for scene {i}")
                         
                     else:
                         # For videos, extract the portion between start and end times
@@ -153,14 +173,16 @@ class VideoSceneComposerAPI(ls.LitAPI):
                         
                         if video_info:
                             video_duration = float(video_info.get('duration', 0))
+                            logger.info(f"Original video duration for scene {i}: {video_duration}s")
                             
                             if video_duration < clip_duration:
                                 # If video is shorter than needed, we need to loop it
-                                logger.info(f"Video is shorter than needed duration. Looping video.")
+                                logger.info(f"Video is shorter than needed duration. Looping video for scene {i}")
                                 
                                 # Create a temporary file with the video repeated multiple times
                                 temp_concat_file = os.path.join(temp_dir, f"concat_{i}.txt")
                                 repeats = int(clip_duration / video_duration) + 1
+                                logger.info(f"Will repeat video {repeats} times for scene {i}")
                                 
                                 with open(temp_concat_file, 'w') as f:
                                     for _ in range(repeats):
@@ -175,9 +197,11 @@ class VideoSceneComposerAPI(ls.LitAPI):
                                     r=fps,
                                     s=f"{width}x{height}"
                                 ).run(overwrite_output=True, quiet=True)
+                                logger.info(f"Video looping completed for scene {i}")
                                 
                             else:
                                 # Just cut the video to the needed duration
+                                logger.info(f"Cutting video to duration {clip_duration}s for scene {i}")
                                 ffmpeg.input(media_path).output(
                                     processed_path,
                                     t=clip_duration,
@@ -186,10 +210,12 @@ class VideoSceneComposerAPI(ls.LitAPI):
                                     r=fps,
                                     s=f"{width}x{height}"
                                 ).run(overwrite_output=True, quiet=True)
+                                logger.info(f"Video cutting completed for scene {i}")
                         else:
                             logger.warning(f"Could not get video info for scene {i}")
                             return None
                     
+                    logger.info(f"Scene {i} processing completed successfully")
                     return {
                         "index": i,
                         "path": processed_path,
@@ -246,6 +272,29 @@ class VideoSceneComposerAPI(ls.LitAPI):
             logger.info(f"Running ffmpeg command: {' '.join(ffmpeg_cmd)}")
             subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
+            # Check if caption video is provided and merge it with the final video
+            if caption_path and os.path.exists(caption_path):
+                logger.info(f"Merging caption video from {caption_path}")
+                final_with_caption_path = os.path.join(temp_dir, "final_with_caption.mp4")
+                
+                # Alternative approach using simpler overlay command
+                caption_cmd = [
+                    'ffmpeg',
+                    '-i', output_path,
+                    '-i', caption_path,
+                    '-filter_complex', 'overlay=0:0',
+                    '-c:a', 'copy',
+                    final_with_caption_path,
+                    '-y'
+                ]
+                
+                logger.info(f"Running caption overlay command: {' '.join(caption_cmd)}")
+                subprocess.run(caption_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                
+                # Update output path to the video with captions
+                output_path = final_with_caption_path
+                logger.info("Caption overlay completed successfully")
+            
             logger.info("Video composition completed successfully")
             return output_path
             
@@ -262,18 +311,18 @@ class VideoSceneComposerAPI(ls.LitAPI):
             
             # Clean up temporary files
             temp_dir = os.path.dirname(output_path)
-            for file in os.listdir(temp_dir):
-                file_path = os.path.join(temp_dir, file)
-                try:
-                    if os.path.isfile(file_path):
-                        os.unlink(file_path)
-                except Exception as e:
-                    logger.error(f"Error deleting file {file_path}: {str(e)}")
+            # for file in os.listdir(temp_dir):
+            #     file_path = os.path.join(temp_dir, file)
+            #     try:
+            #         if os.path.isfile(file_path):
+            #             os.unlink(file_path)
+            #     except Exception as e:
+            #         logger.error(f"Error deleting file {file_path}: {str(e)}")
             
-            try:
-                os.rmdir(temp_dir)
-            except Exception as e:
-                logger.error(f"Error removing temporary directory {temp_dir}: {str(e)}")
+            # try:
+            #     os.rmdir(temp_dir)
+            # except Exception as e:
+            #     logger.error(f"Error removing temporary directory {temp_dir}: {str(e)}")
             
             # Return the response with the correct media type
             return Response(content=content, media_type="video/mp4")

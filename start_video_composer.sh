@@ -56,10 +56,10 @@ start_service() {
     cd $APP_DIR
     
     # Start the process and save PID
-    nohup $PYTHON_ENV $APP_NAME >> "$LOG_DIR/nohup.$(date +%Y%m%d).out" 2>&1 & 
+    nohup $PYTHON_ENV $APP_NAME >> "$LOG_DIR/video_composer.$(date +%Y%m%d).out" 2>&1 & 
     echo $! > $PID_FILE
     echo "Service started with PID $(cat $PID_FILE)"
-    echo "Check logs at $LOG_DIR/nohup.$(date +%Y%m%d).out"
+    echo "Check logs at $LOG_DIR/video_composer.$(date +%Y%m%d).out"
 }
 
 # Function to stop the service
