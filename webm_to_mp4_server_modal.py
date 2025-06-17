@@ -4,7 +4,7 @@ import tempfile
 import ffmpeg
 import logging
 import typer
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from starlette.middleware.cors import CORSMiddleware
 
 # Configure logging
@@ -26,7 +26,7 @@ image = (
 
 @app.function(image=image)
 @modal.fastapi_endpoint(method="POST", docs=True)
-async def convert_webm_to_mp4(video: modal.File, compress: bool = False):
+async def convert_webm_to_mp4(video: UploadFile, compress: bool = False):
     """Convert a WebM file to MP4 format with optional compression."""
     logger.info("Starting WebM to MP4 conversion")
     
@@ -36,7 +36,7 @@ async def convert_webm_to_mp4(video: modal.File, compress: bool = False):
     
     try:
         # Save the uploaded webm to a temporary file
-        content = video.read()
+        content = await video.read()
         if len(content) == 0:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
         
