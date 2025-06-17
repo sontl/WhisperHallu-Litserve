@@ -1,18 +1,9 @@
 import modal
 import os
-import tempfile
-import ffmpeg
-import logging
 import typer
-from fastapi import HTTPException, UploadFile
-from starlette.middleware.cors import CORSMiddleware
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+from fastapi import HTTPException, UploadFile, Response
+from starlette.middleware.cors import CORSMiddleware
 
 # Create Modal app
 app = modal.App("webm-to-mp4")
@@ -27,7 +18,17 @@ image = (
 @app.function(image=image)
 @modal.fastapi_endpoint(method="POST", docs=True)
 async def convert_webm_to_mp4(video: UploadFile, compress: bool = False):
+    import logging
+    import tempfile
+    import ffmpeg
     """Convert a WebM file to MP4 format with optional compression."""
+    # Configure logging for the Modal function
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+    
     logger.info("Starting WebM to MP4 conversion")
     
     # Create temporary files for input and output
@@ -97,10 +98,10 @@ async def convert_webm_to_mp4(video: UploadFile, compress: bool = False):
         with open(output_path, "rb") as f:
             content = f.read()
         
-        return modal.Response(
+        return Response(
             content=content,
+            media_type="video/mp4",
             headers={
-                "Content-Type": "video/mp4",
                 "Content-Disposition": "attachment; filename=converted.mp4"
             }
         )
