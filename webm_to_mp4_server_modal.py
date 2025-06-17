@@ -1,6 +1,7 @@
 import modal
 import os
 import typer
+import subprocess
 
 from fastapi import HTTPException, UploadFile, Response
 from starlette.middleware.cors import CORSMiddleware
@@ -15,7 +16,11 @@ image = (
     .pip_install(["ffmpeg-python", "fastapi[standard]", "typer"])
 )
 
-@app.function(image=image)
+@app.function(
+    image=image,
+    timeout=2000,
+    gpu="T4"
+)
 @modal.fastapi_endpoint(method="POST", docs=True)
 async def convert_webm_to_mp4(video: UploadFile, compress: bool = False):
     import logging
@@ -28,6 +33,15 @@ async def convert_webm_to_mp4(video: UploadFile, compress: bool = False):
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     logger = logging.getLogger(__name__)
+    
+    # Check NVIDIA driver status
+    try:
+        nvidia_smi = subprocess.check_output(['nvidia-smi'], stderr=subprocess.STDOUT).decode()
+        logger.info(f"NVIDIA driver info:\n{nvidia_smi}")
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Could not get NVIDIA driver info: {e.output.decode()}")
+    except FileNotFoundError:
+        logger.warning("nvidia-smi not found, GPU acceleration may not be available")
     
     logger.info("Starting WebM to MP4 conversion")
     
@@ -57,42 +71,76 @@ async def convert_webm_to_mp4(video: UploadFile, compress: bool = False):
 
         # Set encoding parameters
         encoding_params = {
-            'vcodec': 'libx264',
+            'vcodec': 'h264_nvenc',
             'acodec': 'aac',
             'pix_fmt': 'yuv420p',
-            'profile': 'high',
-            'level': '4.0',
-            'movflags': '+faststart+rtphint',
-            'strict': 'strict',
-            'brand': 'mp42',
-            'ac': 2,
-            'ar': '48000',
-            'max_muxing_queue_size': '1024'
+            'preset': 'medium',    # Use standard preset
+            'rc': 'vbr',          # Simple variable bitrate mode
+            'b:v': '2M',          # Video bitrate
+            'maxrate': '4M',
+            'bufsize': '8M',
+            'ac': 2,              # Audio channels
+            'ar': '48000',        # Audio sample rate
+            'movflags': '+faststart'
         }
 
         if compress:
             logger.info("Using compressed settings")
             encoding_params.update({
-                'preset': 'slower',
-                'crf': '28',
-                'video_bitrate': '800k',
-                'audio_bitrate': '96k',
-                'g': '60',
+                'b:v': '800k',    # Lower video bitrate for compression
+                'maxrate': '1M',
+                'bufsize': '2M',
+                'b:a': '96k',     # Lower audio bitrate
             })
         else:
             logger.info("Using standard quality settings")
             encoding_params.update({
-                'preset': 'medium',
-                'video_bitrate': '2M',
-                'g': '30',
-                'force_key_frames': 'expr:gte(t,n_forced*2)'
+                'b:v': '2M',      # Higher video bitrate for quality
+                'maxrate': '4M',
+                'bufsize': '8M'
             })
 
         # Convert WebM to MP4
         logger.info("Starting FFmpeg conversion")
         stream = ffmpeg.input(webm_temp.name)
         stream = ffmpeg.output(stream, output_path, **encoding_params)
-        ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        
+        try:
+            # First try with GPU encoding
+            logger.info("Attempting GPU encoding with NVENC...")
+            ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        except ffmpeg.Error as e:
+            logger.warning(f"GPU encoding failed with error: {e.stderr.decode()}")
+            logger.info("Falling back to CPU encoding...")
+            
+            # Fallback to CPU encoding with compatible parameters
+            cpu_params = encoding_params.copy()
+            cpu_params['vcodec'] = 'libx264'
+            # Remove NVENC-specific parameters
+            for key in ['rc', 'spatial-aq', 'temporal-aq']:
+                cpu_params.pop(key, None)
+            
+            if not compress:
+                cpu_params.update({
+                    'preset': 'veryfast',
+                    'crf': '23'
+                })
+            else:
+                cpu_params.update({
+                    'preset': 'medium',
+                    'crf': '28'
+                })
+            
+            # Try CPU encoding
+            stream = ffmpeg.input(webm_temp.name)
+            stream = ffmpeg.output(stream, output_path, **cpu_params)
+            try:
+                ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+                logger.info("CPU encoding completed successfully")
+            except ffmpeg.Error as e:
+                error_message = f"Both GPU and CPU encoding failed. FFmpeg error: {e.stderr.decode()}"
+                logger.error(error_message)
+                raise HTTPException(status_code=500, detail=error_message)
         
         # Read the converted file
         with open(output_path, "rb") as f:
