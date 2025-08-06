@@ -73,6 +73,7 @@ Run with nohup
 nohup python whisperhallu_server.py &
 nohup python demucs_server.py &
 nohup python video_scene_composer_server.py &
+nohup python video2x_server.py &
 ```
 
 Or use the start scripts:
@@ -80,11 +81,13 @@ Or use the start scripts:
 ```bash
 chmod +x start_whisperhallu.sh
 chmod +x start_video_composer.sh
+chmod +x start_video2x_server.sh
 ```
 
 ```bash
 ./start_whisperhallu.sh start
 ./start_video_composer.sh start
+./start_video2x_server.sh start
 ```
 
 To check the status of the services:
@@ -106,6 +109,7 @@ Or use the start scripts:
 ```bash
 ./start_whisperhallu.sh stop
 ./start_video_composer.sh stop
+./start_video2x_server.sh stop
 ```
 
 To restart the services:
@@ -119,6 +123,7 @@ Or use the start scripts:
 ```bash
 ./start_whisperhallu.sh restart
 ./start_video_composer.sh restart
+./start_video2x_server.sh restart
 ```
 
 The services are set to start automatically on system boot.
@@ -226,6 +231,85 @@ The WebM to MP4 conversion service is a lightweight API server that converts Web
    ```
 
 The service runs on port 8882 by default and accepts WebM video files through HTTP POST requests. The converted MP4 file is returned in the response.
+
+## Video2X Upscaling Service
+
+### What is it?
+The Video2X upscaling service is an AI-powered video upscaling API that uses Docker containers with GPU acceleration to enhance video quality. It supports both general video upscaling and specialized anime video processing using different AI models.
+
+### Setting up the Video2X Service
+
+1. **Prerequisites**
+   Make sure Docker is installed with GPU support:
+   ```bash
+   # Install Docker
+   sudo apt install docker.io
+   
+   # Install NVIDIA Container Toolkit for GPU support
+   distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+   curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+   curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+   sudo apt-get update && sudo apt-get install -y nvidia-docker2
+   sudo systemctl restart docker
+   ```
+
+2. **Start the Service**
+   You can start the Video2X service using the provided control script:
+   ```bash
+   chmod +x start_video2x_server.sh
+   ./start_video2x_server.sh start
+   ```
+
+3. **Managing the Service**
+   - To stop the service:
+     ```bash
+     ./start_video2x_server.sh stop
+     ```
+   - To restart the service:
+     ```bash
+     ./start_video2x_server.sh restart
+     ```
+
+4. **Check the Logs**
+   You can monitor the Video2X service logs:
+   ```bash
+   cat logs/video2x.YYYYMMDD.out
+   ```
+
+5. **Test the Service**
+   
+   **For regular video upscaling:**
+   ```bash
+   curl -X POST http://localhost:8866/upscale \
+     -F "file=@your_video.mp4" \
+     -F "scale=3"
+   ```
+   
+   **For anime video upscaling:**
+   ```bash
+   curl -X POST http://localhost:8866/upscale \
+     -F "file=@anime_video.mp4" \
+     -F "scale=4" \
+     -F "isAnime=true"
+   ```
+   
+   **Download the upscaled video:**
+   ```bash
+   # Use the file_path from the response
+   curl "http://localhost:8866/download?file_path=/path/to/output_upscaled.mp4" \
+     -o upscaled_video.mp4
+   ```
+
+### API Parameters
+- **file**: The video file to upscale (required)
+- **scale**: Integer scale factor (optional, defaults to 3)
+- **isAnime**: Boolean flag for anime processing (optional, defaults to false)
+  - When `true`: Uses RealESRGAN with realesr-animevideov3 model
+  - When `false`: Uses RealCUGAN with models-se model
+
+The service runs on port 8866 by default and provides two endpoints:
+- `/upscale`: POST endpoint for video upscaling
+- `/download`: GET endpoint for downloading processed videos
 
 ## Future Enhancements
 - Add streaming capabilities to handle larger audio files in chunks.

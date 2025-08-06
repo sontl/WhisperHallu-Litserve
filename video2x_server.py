@@ -2,9 +2,10 @@ import os
 import subprocess
 import tempfile
 import urllib.parse
-from fastapi import UploadFile, HTTPException
+from fastapi import UploadFile, HTTPException, Form
 from fastapi.responses import FileResponse
 from fastapi import FastAPI
+from typing import Optional
 import litserve as ls
 
 class VideoUpscalerAPI(ls.LitAPI):
@@ -12,18 +13,50 @@ class VideoUpscalerAPI(ls.LitAPI):
         # Store temp directories to prevent cleanup
         self.temp_dirs = {}
 
-    def decode_request(self, request: UploadFile):
+    def decode_request(self, request):
+        # Handle both UploadFile (from LitServe /predict) and dict (from custom /upscale)
+        if isinstance(request, UploadFile):
+            # Direct UploadFile from LitServe /predict endpoint
+            file = request
+            scale = 3  # default
+            is_anime = False  # default
+        else:
+            # Form data with parameters from custom /upscale endpoint
+            file = request.get('file')
+            scale = int(request.get('scale', 3))
+            is_anime = request.get('isAnime', 'false').lower() == 'true'
+        
+        if file is None:
+            raise ValueError("No file provided in request")
+            
         temp_dir = tempfile.TemporaryDirectory()
         input_path = os.path.join(temp_dir.name, "input.mp4")
         with open(input_path, "wb") as f:
-            f.write(request.file.read())
+            # Read file content properly
+            if isinstance(file, UploadFile):
+                # For UploadFile, read directly
+                content = file.file.read()
+            else:
+                # For dict-based request, file should also be UploadFile
+                content = file.file.read()
+            f.write(content)
         # Store temp_dir reference to prevent cleanup
         self.temp_dirs[input_path] = temp_dir
-        return input_path
+        return {
+            'input_path': input_path,
+            'scale': scale,
+            'is_anime': is_anime
+        }
 
-    def predict(self, input_path):
+    def predict(self, request_data):
+        input_path = request_data['input_path']
+        scale = request_data['scale']
+        is_anime = request_data['is_anime']
+        
         temp_dir = self.temp_dirs[input_path]
         output_path = os.path.join(temp_dir.name, "output_upscaled.mp4")
+        
+        # Build command based on parameters
         command = [
             "docker", "run", "--gpus", "all",
             "-e", "NVIDIA_VISIBLE_DEVICES=all",
@@ -36,18 +69,27 @@ class VideoUpscalerAPI(ls.LitAPI):
             "--device", "/dev/nvidia-modeset",
             "--device", "/dev/nvidia-uvm",
             "--device", "/dev/nvidia-uvm-tools",
-            "-it", "--rm",
+            "--rm",  # Removed -it flag to avoid TTY issues
             "ghcr.io/k4yt3x/video2x:6.4.0",
             "-i", "/host/input.mp4",
             "-o", "/host/output_upscaled.mp4",
-            "-p", "realcugan",
-            "-s", "3",
-            "--realcugan-model", "models-se"
+            "-s", str(scale)
         ]
+        
+        if is_anime:
+            command.extend(["-p", "realesrgan", "--realesrgan-model", "realesr-animevideov3"])
+        else:
+            command.extend(["-p", "realcugan", "--realcugan-model", "models-se"])
+        
         try:
-            subprocess.run(command, check=True)
+            result = subprocess.run(command, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"video2x processing failed: {e}")
+            error_msg = f"video2x processing failed: {e}"
+            if e.stdout:
+                error_msg += f"\nStdout: {e.stdout}"
+            if e.stderr:
+                error_msg += f"\nStderr: {e.stderr}"
+            raise RuntimeError(error_msg)
         return output_path
 
     def encode_response(self, output_path):
@@ -56,6 +98,30 @@ class VideoUpscalerAPI(ls.LitAPI):
 if __name__ == "__main__":
     api = VideoUpscalerAPI()
     server = ls.LitServer(api)
+    
+    # Add custom endpoint for video upscaling with parameters
+    @server.app.post("/upscale")
+    async def upscale_video(
+        file: UploadFile,
+        scale: Optional[int] = Form(3),
+        isAnime: Optional[bool] = Form(False)
+    ):
+        try:
+            # Create request data structure
+            request_data = {
+                'file': file,
+                'scale': scale,
+                'isAnime': isAnime
+            }
+            
+            # Process through the API
+            decoded_request = api.decode_request(request_data)
+            output_path = api.predict(decoded_request)
+            response = api.encode_response(output_path)
+            
+            return response
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
     
     # Add the download endpoint to LitServer's FastAPI app
     @server.app.get("/download")
