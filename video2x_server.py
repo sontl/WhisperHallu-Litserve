@@ -2,6 +2,7 @@ import os
 import subprocess
 import tempfile
 import urllib.parse
+import requests
 from fastapi import UploadFile, HTTPException, Form
 from fastapi.responses import FileResponse
 from fastapi import FastAPI
@@ -18,28 +19,50 @@ class VideoUpscalerAPI(ls.LitAPI):
         if isinstance(request, UploadFile):
             # Direct UploadFile from LitServe /predict endpoint
             file = request
+            url = None
             scale = 3  # default
             is_anime = False  # default
         else:
             # Form data with parameters from custom /upscale endpoint
             file = request.get('file')
+            url = request.get('url')
             scale = int(request.get('scale', 3))
             is_anime = request.get('isAnime', 'false').lower() == 'true'
         
-        if file is None:
-            raise ValueError("No file provided in request")
+        if file is None and url is None:
+            raise ValueError("Either file or URL must be provided in request")
+        
+        if file is not None and url is not None:
+            raise ValueError("Please provide either file or URL, not both")
             
         temp_dir = tempfile.TemporaryDirectory()
         input_path = os.path.join(temp_dir.name, "input.mp4")
-        with open(input_path, "wb") as f:
-            # Read file content properly
-            if isinstance(file, UploadFile):
-                # For UploadFile, read directly
-                content = file.file.read()
-            else:
-                # For dict-based request, file should also be UploadFile
-                content = file.file.read()
-            f.write(content)
+        
+        if url is not None:
+            # Download video from URL
+            try:
+                response = requests.get(url, stream=True, timeout=300)
+                response.raise_for_status()
+                
+                with open(input_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+            except requests.exceptions.RequestException as e:
+                temp_dir.cleanup()
+                raise ValueError(f"Failed to download video from URL: {str(e)}")
+        else:
+            # Handle uploaded file
+            with open(input_path, "wb") as f:
+                # Read file content properly
+                if isinstance(file, UploadFile):
+                    # For UploadFile, read directly
+                    content = file.file.read()
+                else:
+                    # For dict-based request, file should also be UploadFile
+                    content = file.file.read()
+                f.write(content)
+        
         # Store temp_dir reference to prevent cleanup
         self.temp_dirs[input_path] = temp_dir
         return {
@@ -102,7 +125,8 @@ if __name__ == "__main__":
     # Add custom endpoint for video upscaling with parameters
     @server.app.post("/upscale")
     async def upscale_video(
-        file: UploadFile,
+        file: Optional[UploadFile] = None,
+        url: Optional[str] = Form(None),
         scale: Optional[int] = Form(3),
         isAnime: Optional[bool] = Form(False)
     ):
@@ -110,6 +134,7 @@ if __name__ == "__main__":
             # Create request data structure
             request_data = {
                 'file': file,
+                'url': url,
                 'scale': scale,
                 'isAnime': isAnime
             }
