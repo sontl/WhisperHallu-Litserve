@@ -3,7 +3,7 @@ import os
 import typer
 import subprocess
 
-from fastapi import HTTPException, UploadFile, Response
+from fastapi import HTTPException, UploadFile, Response, Request
 from starlette.middleware.cors import CORSMiddleware
 
 # Create Modal app
@@ -77,18 +77,28 @@ def gpu_convert(webm_content: bytes, compress: bool = False):
         webm_temp.write(webm_content)
         webm_temp.close()
         
-        # T4 GPU optimized encoding parameters (FFmpeg 7.x NVENC-compatible names)
+        # T4 GPU optimized encoding parameters (fast + high quality)
         gpu_params = {
             'vcodec': 'h264_nvenc',
             'acodec': 'aac',
-            'pix_fmt': 'yuv420p',
-            'preset': 'p4',           # T4-optimized preset
-            'b:v': '2M',              # Video bitrate
-            'maxrate': '4M',
-            'bufsize': '8M',
+            'tune': 'hq',
+            'preset': 'p7',           # faster than p4, good quality
+            'profile:v': 'high',
+            'refs': '4',
+            'g': '240',
+            'spatial-aq': '1',
+            'temporal-aq': '1',
+            'bf': '3',                # better compression/quality
+            'rc': 'vbr_hq',              # rate control
+            'rc-lookahead': '32',     # lookahead for b-frames/rc
+            'aq-strength': '8',
+            'b:v': '6M',     
+            'b:a': '192k',         # raise bitrate to preserve quality
+            'maxrate': '10M',
+            'bufsize': '20M',
             'ac': 2,                  # Audio channels
             'ar': '48000',            # Audio sample rate
-            'movflags': '+faststart'
+            'movflags': '+faststart',
         }
         
         if compress:
@@ -99,9 +109,18 @@ def gpu_convert(webm_content: bytes, compress: bool = False):
                 'b:a': '96k'
             })
         
-        # Convert with GPU
-        stream = ffmpeg.input(webm_temp.name)
-        stream = ffmpeg.output(stream, output_path, **gpu_params)
+        # Convert with GPU: enable NVDEC and keep frames on GPU path
+        stream = ffmpeg.input(
+            webm_temp.name,
+            hwaccel='cuda',
+            hwaccel_output_format='cuda'
+        )
+        stream = ffmpeg.output(
+            stream,
+            output_path,
+            vf='scale_cuda=format=nv12',
+            **gpu_params
+        )
         
         try:
             ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
@@ -224,12 +243,12 @@ def fastapi_app():
     )
     
     @web_app.post("/convert")
-    async def convert_webm_to_mp4_endpoint(video: UploadFile, compress: bool = False):
-        return await convert_webm_to_mp4(video, compress)
+    async def convert_webm_to_mp4_endpoint(video: UploadFile, compress: bool = False, request: Request = None):
+        return await convert_webm_to_mp4(video, compress, request)
     
     return web_app
 
-async def convert_webm_to_mp4(video: UploadFile, compress: bool = False):
+async def convert_webm_to_mp4(video: UploadFile, compress: bool = False, request: Request | None = None):
     import logging
     """Convert a WebM file to MP4 format with GPU-first, CPU fallback architecture."""
     # Configure logging for the Modal function
@@ -269,13 +288,81 @@ async def convert_webm_to_mp4(video: UploadFile, compress: bool = False):
                 raise HTTPException(status_code=500, detail=error_message)
         
         logger.info(f"Conversion completed, output size: {len(content)} bytes")
-        
+
+        total = len(content)
+        headers = {
+            "Content-Disposition": "attachment; filename=converted.mp4",
+            "Accept-Ranges": "bytes",
+        }
+
+        # Handle HTTP Range header for partial content
+        range_header = None
+        if request is not None:
+            range_header = request.headers.get("range") or request.headers.get("Range")
+
+        if range_header:
+            try:
+                # Expected formats:
+                # bytes=start-end
+                # bytes=start-
+                # bytes=-suffix_length
+                units, _, ranges = range_header.partition("=")
+                if units.strip().lower() != "bytes" or not ranges:
+                    raise ValueError("Invalid Range units")
+
+                # Only support a single range
+                range_spec = ranges.split(",")[0].strip()
+
+                if range_spec.startswith("-"):
+                    # suffix range
+                    suffix_len = int(range_spec[1:])
+                    if suffix_len <= 0:
+                        raise ValueError("Invalid suffix length")
+                    start = max(total - suffix_len, 0)
+                    end = total - 1
+                else:
+                    start_str, _, end_str = range_spec.partition("-")
+                    if not start_str.isdigit():
+                        raise ValueError("Invalid start")
+                    start = int(start_str)
+                    end = total - 1 if end_str == "" else int(end_str)
+
+                if start < 0 or end < start or start >= total:
+                    # Unsatisfiable range
+                    return Response(
+                        status_code=416,
+                        media_type="video/mp4",
+                        headers={
+                            **headers,
+                            "Content-Range": f"bytes */{total}",
+                            "Content-Length": "0",
+                        },
+                        content=b"",
+                    )
+
+                end = min(end, total - 1)
+                body = content[start:end + 1]
+                headers.update({
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                    "Content-Length": str(len(body)),
+                })
+
+                return Response(
+                    content=body,
+                    media_type="video/mp4",
+                    status_code=206,
+                    headers=headers,
+                )
+            except Exception as _:
+                # Malformed Range header -> ignore and send full content
+                pass
+
+        # No (valid) range: return full content
+        headers["Content-Length"] = str(total)
         return Response(
             content=content,
             media_type="video/mp4",
-            headers={
-                "Content-Disposition": "attachment; filename=converted.mp4"
-            }
+            headers=headers,
         )
 
     except HTTPException:

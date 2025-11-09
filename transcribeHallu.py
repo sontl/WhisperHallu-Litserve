@@ -106,7 +106,7 @@ os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, f"transcribehallu_{datetime.now().strftime('%Y%m%d')}.log")
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     handlers=[
         logging.FileHandler(log_file),
         logging.StreamHandler()
@@ -205,7 +205,7 @@ def getPrompt(lng:str):
             +"आपकी भाषा में आपके उद्देश्य के लिए एक प्रासंगिक वाक्य। "\
             +"ओके, विस्पर. विस्पर, ओके. ओके, विस्पर. विस्पर, ओके. "\
             +"कृपया यहां खोजें, एक असंभावित सामान्य वाक्य। "\
-            +"यह हटाए जाने की पुनरावृत्ति से ��चने के लिए है। "\
+            +"यह हटाए जाने की पुनरावृत्ति से चने के लिए है। "\
             +"ओके, विस्पर. "
     
     #Not Already defined?
@@ -249,51 +249,42 @@ def transcribeOpts(path: str, opts: dict, lngInput=None, lng=None, isMusic=False
         #Convert to WAV to avoid later possible decoding problem
         pathWAV = pathIn+".WAV"+".wav"
         aCmd = "ffmpeg -y"+" -i \""+pathIn+"\""+" -ss "+subBeg+" -to "+subEnd + " -c:a pcm_s16le -ar "+str(SAMPLING_RATE)+" \""+pathWAV+"\" > \""+pathWAV+".log\" 2>&1"
-        logger.info(f"CMD: {aCmd}")
+        logger.info(f"Converting to WAV - Command: {aCmd}")
         os.system(aCmd)
         duration = getDuration(pathWAV+".log")
-        logger.info(f"T={(time.time()-startTime)}")
-        logger.info(f"DURATION={str(duration)} subBeg={str(subBeg)} subEnd={str(subEnd)}")
-        logger.info(f"PATH={pathWAV}")
+        logger.info(f"Conversion time: {time.time()-startTime:.2f}s")
+        logger.info(f"Duration: {duration}s, subBeg: {subBeg}, subEnd: {subEnd}")
+        logger.info(f"WAV path: {pathWAV}")
         pathIn = pathClean = pathWAV
     except Exception as e:
-         logger.error("Warning: can't convert to WAV")
-         logger.error(str(e))
+         logger.error("Failed to convert to WAV", exc_info=True)
 
     try:
         if(stretch != None):
             pathSTRETCH = pathIn+".STRETCH"+".wav"
-            #ffmpeg STRECH
             aCmd = "ffmpeg -y -i \""+pathIn+"\""+" -t "+str(truncDuration) + " -filter:a \"atempo="+stretch+"\"" + " -c:a pcm_s16le -ar "+str(SAMPLING_RATE)+" \""+pathSTRETCH+"\" > \""+pathSTRETCH+".log\" 2>&1"
-            #sox STRECH
-            #aCmd = "sox \""+pathIn+"\""+" \""+pathSTRETCH+"\" tempo "+stretch+" > \""+pathSTRETCH+".log\" 2>&1"
-            #soundstretch STRECH
-            #aCmd = "soundstretch \""+pathIn+"\""+" \""+pathSTRETCH+"\" -tempo="+str(int(100*float(stretch)) - 100)+" > \""+pathSTRETCH+".log\" 2>&1"
-            #rubberband STRECH
-            #aCmd = "rubberband \""+pathIn+"\""+" \""+pathSTRETCH+"\" --tempo "+stretch+" > \""+pathSTRETCH+".log\" 2>&1"
-            logger.info(f"CMD: {aCmd}")
+            logger.info(f"Stretching audio - Command: {aCmd}")
             os.system(aCmd)
-            logger.info(f"T={(time.time()-startTime)}")
-            logger.info(f"PATH={pathWAV}")
+            logger.info(f"Stretch time: {time.time()-startTime:.2f}s")
+            logger.info(f"Stretched file: {pathSTRETCH}")
             pathIn = pathClean = pathWAV = pathSTRETCH
     except Exception as e:
-         logger.error("Warning: can't STRETCH")
-         logger.error(str(e))
+         logger.error("Failed to stretch audio", exc_info=True)
 
     startTime = time.time()
     try:
         #Check for duration
         aCmd = "ffmpeg -y -i \""+pathIn+"\" "+ " -f null - > \""+pathIn+".dur\" 2>&1"
-        logger.info(f"CMD: {aCmd}")
+        logger.info(f"Checking duration - Command: {aCmd}")
         os.system(aCmd)
-        logger.info(f"T={(time.time()-startTime)}")
+        logger.info(f"Duration check time: {time.time()-startTime:.2f}s")
         duration = getDuration(pathIn+".dur")
-        logger.info(f"DURATION={str(duration)} max {str(maxDuration)}")
+        logger.info(f"Audio duration: {duration}s (max: {maxDuration}s)")
         if(duration > maxDuration):
+            logger.warning(f"Audio too long: {duration}s > {maxDuration}s")
             return "[Too long ("+str(duration)+"s)]"
     except Exception as e:
-         logger.error("Warning: can't analyze duration")
-         logger.error(str(e))
+         logger.error("Failed to check duration", exc_info=True)
 
     try:
         if(useSpleeter):
@@ -766,9 +757,12 @@ def transcribeMARK(path: str, opts: dict, mode=1, lngInput=None, aLast=None, isM
 
 import requests
 def transcribe_with_gladia(audio_path, source_lang, target_lang):
+    logger.info(f"Starting Gladia transcription - File: {audio_path}")
+    logger.info(f"Source language: {source_lang}, Target language: {target_lang}")
+    
     upload_url = "https://api.gladia.io/v2/upload"
     transcribe_url = "https://api.gladia.io/v2/pre-recorded"
-    # logger.info(f"transcribe_with_gladia(): {audio_path}, {source_lang}, {target_lang}")
+    
     # Get API key from environment variable
     api_key = os.getenv('GLADIA_API_KEY')
     if not api_key:
@@ -787,12 +781,13 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
             upload_response = requests.post(upload_url, files=files, headers=headers)
         
         if upload_response.status_code != 200:
-            logger.error(f"Error uploading file: {upload_response.status_code}")
-            logger.error(upload_response.text)
+            logger.error(f"Upload failed - Status code: {upload_response.status_code}")
+            logger.error(f"Response: {upload_response.text}")
             return json.dumps({"text": "", "srt": "", "json": []})
 
         upload_result = upload_response.json()
         audio_url = upload_result["audio_url"]
+        logger.info(f"File uploaded successfully - URL: {audio_url}")
 
         # Step 2: Request transcription
         transcribe_headers = {
@@ -817,10 +812,12 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
             },
         }
 
+        logger.info("Requesting transcription from Gladia")
         transcribe_response = requests.post(transcribe_url, json=payload, headers=transcribe_headers)
         if transcribe_response.status_code == 200 or transcribe_response.status_code == 201:
             transcribe_result = transcribe_response.json()
             result_url = transcribe_result["result_url"]
+            logger.info(f"Transcription request successful - Result URL: {result_url}")
             
             # Step 3: Fetch the result with Fibonacci backoff polling
             def fibonacci():
@@ -840,25 +837,25 @@ def transcribe_with_gladia(audio_path, source_lang, target_lang):
                     gladia_result = result_response.json()
                     
                     if gladia_result.get("status") == "done":
+                        logger.info("Transcription completed successfully")
                         formatted_result = convert_gladia_to_internal_format(gladia_result)
                         return json.dumps(formatted_result)
                     else:
-                        # wait_time = next(fib)
                         wait_time = 3
                         total_wait_time += wait_time
-                        logger.info(f"Gladia result not ready. Status: {gladia_result.get('status')}. Waiting {wait_time} seconds... (Total wait: {total_wait_time}s)")
+                        logger.info(f"Waiting for result - Status: {gladia_result.get('status')} - Waited: {total_wait_time}s")
                         time.sleep(wait_time)
                 else:
-                    logger.error(f"Error fetching result from Gladia API: {result_response.status_code}")
-                    logger.error(result_response.text)
+                    logger.error(f"Failed to fetch result - Status code: {result_response.status_code}")
+                    logger.error(f"Response: {result_response.text}")
                     return json.dumps({"text": "", "srt": "", "json": []})
 
-            logger.info(f"Max wait time ({max_wait_time}s) reached. Gladia result not ready.")
+            logger.warning(f"Timeout waiting for result - Max wait time ({max_wait_time}s) reached")
             return json.dumps({"text": "", "srt": "", "json": []})
         else:
-            logger.error(f"Error requesting transcription from Gladia API: {transcribe_response.status_code}")
-            logger.error(transcribe_response.text)
+            logger.error(f"Transcription request failed - Status code: {transcribe_response.status_code}")
+            logger.error(f"Response: {transcribe_response.text}")
             return json.dumps({"text": "", "srt": "", "json": []})
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error connecting to Gladia API: {str(e)}")
+        logger.error("Failed to connect to Gladia API", exc_info=True)
         return json.dumps({"text": "", "srt": "", "json": []})

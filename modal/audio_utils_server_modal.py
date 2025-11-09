@@ -22,7 +22,7 @@ image = (
     .pip_install(["ffmpeg-python", "requests", "fastapi[standard]", "typer"])
 )
 
-@app.function(image=image)
+@app.function(image=image, scaledown_window=2)
 @modal.fastapi_endpoint(method="POST", docs=True)
 def get_duration(url: str):
     """Get the duration of an MP3 file from a URL."""

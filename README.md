@@ -278,14 +278,21 @@ The Video2X upscaling service is an AI-powered video upscaling API that uses Doc
 
 5. **Test the Service**
    
-   **For regular video upscaling:**
+   **For regular video upscaling (file upload):**
    ```bash
    curl -X POST http://localhost:8866/upscale \
      -F "file=@your_video.mp4" \
      -F "scale=3"
    ```
    
-   **For anime video upscaling:**
+   **For regular video upscaling (URL download):**
+   ```bash
+   curl -X POST http://localhost:8866/upscale \
+     -F "url=https://example.com/your_video.mp4" \
+     -F "scale=3"
+   ```
+   
+   **For anime video upscaling (file upload):**
    ```bash
    curl -X POST http://localhost:8866/upscale \
      -F "file=@anime_video.mp4" \
@@ -293,6 +300,30 @@ The Video2X upscaling service is an AI-powered video upscaling API that uses Doc
      -F "isAnime=true"
    ```
    
+   **For anime video upscaling (URL download):**
+   ```bash
+   curl -X POST http://localhost:8866/upscale \
+     -F "url=https://example.com/anime_video.mp4" \
+     -F "scale=4" \
+     -F "isAnime=true"
+   ```
+   
+  
+  **Using JSON payload (URL download):**
+  ```bash
+  curl -X POST http://localhost:8866/upscale-json \\
+    -H "Content-Type: application/json" \\
+    -d '{"url": "https://example.com/your_video.mp4", "scale": 3}'
+  ```
+  
+  **Using JSON payload with file upload:**
+  ```bash
+  curl -X POST http://localhost:8866/upscale-json \\
+    -H "Content-Type: application/json" \\
+    -F "file=@your_video.mp4" \\
+    -d '{"scale": 3, "isAnime": false, "urlOutput": false}'
+  ```
+  
    **Download the upscaled video:**
    ```bash
    # Use the file_path from the response
@@ -301,11 +332,14 @@ The Video2X upscaling service is an AI-powered video upscaling API that uses Doc
    ```
 
 ### API Parameters
-- **file**: The video file to upscale (required)
+- **file**: The video file to upscale (optional, mutually exclusive with url)
+- **url**: URL of the video to download and upscale (optional, mutually exclusive with file)
 - **scale**: Integer scale factor (optional, defaults to 3)
 - **isAnime**: Boolean flag for anime processing (optional, defaults to false)
   - When `true`: Uses RealESRGAN with realesr-animevideov3 model
   - When `false`: Uses RealCUGAN with models-se model
+
+**Note**: You must provide either `file` or `url`, but not both. The service will download the video from the provided URL before processing.
 
 The service runs on port 8866 by default and provides two endpoints:
 - `/upscale`: POST endpoint for video upscaling
@@ -326,5 +360,3 @@ You can add the following crontab to clean the logs every day at 00:00:
 0 0 * * * /usr/bin/find /path/to/logs -type f -mtime +7 -delete
 ```
 
-## Contributing
-Contributions are welcome! Please fork the repository and submit pull requests.
