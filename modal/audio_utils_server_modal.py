@@ -20,8 +20,8 @@ app = modal.App("audio-utils")
 # Create the image with required dependencies
 image = (
     modal.Image.debian_slim()
-    .apt_install(["ffmpeg"])  # Install FFmpeg binaries
-    .pip_install(["ffmpeg-python", "requests", "fastapi[standard]", "typer"])
+    .apt_install(["ffmpeg", "libsm6", "libxext6", "libxrender-dev", "libglib2.0-0"])  # Install FFmpeg binaries and OpenCV dependencies
+    .pip_install(["ffmpeg-python", "requests", "fastapi[standard]", "typer", "opencv-python-headless"])
 )
 
 # Request models
@@ -36,6 +36,9 @@ class TrimRequest(BaseModel):
     url: str
     start: Optional[float] = None
     end: Optional[float] = None
+
+class LastFrameRequest(BaseModel):
+    url: str
 
 @app.function(image=image, scaledown_window=2)
 @modal.fastapi_endpoint(method="POST", docs=True)
@@ -223,6 +226,85 @@ def trim_video(request: TrimRequest):
         if os.path.exists(temp_output.name):
             os.unlink(temp_output.name)
             logger.info(f"Cleaned up temporary output file: {temp_output.name}")
+
+@app.function(image=image, scaledown_window=2)
+@modal.fastapi_endpoint(method="POST", docs=True)
+def extract_last_frame(request: LastFrameRequest):
+    """Extract the last frame from a video URL and return as an image."""
+    url = request.url
+    logger.info(f"Extracting last frame from video URL: {url}")
+    temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    logger.info(f"Created temporary file: video={temp_video.name}")
+    import cv2
+    import base64
+    import numpy as np
+
+    try:
+        # Download the video file
+        logger.info("Downloading video file...")
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+        logger.info(f"Successfully downloaded {len(response.content)} bytes")
+
+        temp_video.write(response.content)
+        temp_video.close()
+        logger.info("Saved video to temporary file")
+
+        # Open the video file with OpenCV to get the exact last frame
+        logger.info("Opening video with OpenCV to get last frame...")
+        cap = cv2.VideoCapture(temp_video.name)
+
+        # Get total number of frames
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        logger.info(f"Total frames in video: {total_frames}")
+
+        if total_frames <= 0:
+            raise modal.Error("Video has no frames")
+
+        # Set position to last frame
+        cap.set(cv2.CAP_PROP_POS_FRAMES, total_frames - 1)
+
+        # Read the last frame
+        ret, frame = cap.read()
+
+        # Release the video capture object
+        cap.release()
+
+        if not ret or frame is None:
+            raise modal.Error("Failed to read the last frame from video")
+
+        logger.info("Successfully extracted last frame using OpenCV")
+
+        # Encode frame as JPEG to get bytes
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 90]  # 90% quality
+        result, frame_bytes = cv2.imencode('.jpg', frame, encode_param)
+
+        if not result:
+            raise modal.Error("Failed to encode the last frame as JPEG")
+
+        frame_data = frame_bytes.tobytes()
+        logger.info(f"Last frame size: {len(frame_data)} bytes")
+
+        # Return as base64 encoded string
+        frame_base64 = base64.b64encode(frame_data).decode('utf-8')
+
+        return {
+            "frame": frame_base64,
+            "format": "jpeg",
+            "frame_number": total_frames - 1,
+            "total_frames": total_frames
+        }
+
+    except requests.RequestException as e:
+        logger.error(f"Failed to download video: {str(e)}")
+        raise modal.Error(f"Failed to download video: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to extract last frame: {str(e)}")
+        raise modal.Error(f"Failed to extract last frame: {str(e)}")
+    finally:
+        if os.path.exists(temp_video.name):
+            os.unlink(temp_video.name)
+            logger.info(f"Cleaned up temporary video file: {temp_video.name}")
 
 # CLI interface
 cli = typer.Typer()

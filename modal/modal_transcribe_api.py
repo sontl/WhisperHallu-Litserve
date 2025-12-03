@@ -11,7 +11,7 @@ from pathlib import Path
 app = modal.App("whisper-hallu-transcribe")
 
 # Define images for different resource requirements
-# GPU image for Demucs processing
+# GPU image for Demucs processing and audio analysis
 gpu_image = (
     modal.Image.debian_slim(python_version="3.10")
     .pip_install([
@@ -19,7 +19,10 @@ gpu_image = (
         "torchaudio", 
         "demucs",
         "requests",
-        "ffmpeg-python"
+        "ffmpeg-python",
+        "librosa",
+        "numpy",
+        "pydub"
     ])
     .apt_install(["ffmpeg"])
 )
@@ -43,13 +46,15 @@ logger = logging.getLogger(__name__)
     scaledown_window=2,
     timeout=300  # Reduced timeout for GPU processing only
 )
-def extract_vocals_gpu(audio_url: str) -> str:
+def extract_vocals_gpu(audio_url: str, detect_timing: bool = False) -> dict:
     """
     GPU function to extract vocals from audio URL using Demucs.
-    Returns the vocals audio data as bytes.
+    Optionally detects sentence ends and beat drops.
+    Returns vocals audio data and timing information.
     """
     import requests
     import tempfile
+    import base64
     
     try:
         logger.info(f"GPU: Processing audio URL: {audio_url}")
@@ -71,19 +76,29 @@ def extract_vocals_gpu(audio_url: str) -> str:
         wav_path = temp_audio_path + ".wav"
         convert_to_wav(temp_audio_path, wav_path)
         
-        # Step 3: Extract vocals using Demucs
-        vocals_path = extract_vocals_with_demucs(wav_path)
+        # Step 3: Extract vocals and instrumental using Demucs
+        vocals_path, instrumental_path = extract_vocals_with_demucs(wav_path)
         
         # Step 4: Read vocals file and return as base64
-        import base64
         with open(vocals_path, 'rb') as f:
             vocals_data = base64.b64encode(f.read()).decode('utf-8')
         
+        result = {"vocals_data": vocals_data}
+        
+        # Step 5: Detect timing if requested
+        if detect_timing:
+            logger.info("GPU: Detecting sentence ends and beat drops...")
+            sentence_ends = detect_sentence_ends(vocals_path)
+            beat_drops = detect_beats(instrumental_path)
+            
+            result["sentence_ends"] = sentence_ends
+            result["beat_drops"] = beat_drops
+        
         # Cleanup temporary files
-        cleanup_files([temp_audio_path, wav_path, vocals_path])
+        cleanup_files([temp_audio_path, wav_path, vocals_path, instrumental_path])
         
         logger.info("GPU: Vocal extraction completed")
-        return vocals_data
+        return result
         
     except Exception as e:
         logger.error(f"GPU: Error in vocal extraction: {str(e)}")
@@ -105,8 +120,8 @@ def convert_to_wav(input_path: str, output_path: str):
     if result.returncode != 0:
         raise Exception(f"FFmpeg conversion failed: {result.stderr}")
 
-def extract_vocals_with_demucs(audio_path: str) -> str:
-    """Extract vocals from audio using Demucs"""
+def extract_vocals_with_demucs(audio_path: str) -> tuple:
+    """Extract vocals and instrumental from audio using Demucs"""
     import torch
     import torchaudio
     from demucs.pretrained import get_model_from_args
@@ -144,8 +159,18 @@ def extract_vocals_with_demucs(audio_path: str) -> str:
     vocals = result[0, vocals_idx].mean(0)
     torchaudio.save(vocals_path, vocals[None], model.samplerate)
     
+    # Extract instrumental (no_vocals)
+    instrumental_path = audio_path + ".instrumental.wav"
+    # Combine all non-vocal sources
+    instrumental = torch.zeros_like(vocals)
+    for idx, source in enumerate(model.sources):
+        if source != 'vocals':
+            instrumental += result[0, idx].mean(0)
+    torchaudio.save(instrumental_path, instrumental[None], model.samplerate)
+    
     logger.info(f"Vocals extracted to: {vocals_path}")
-    return vocals_path
+    logger.info(f"Instrumental extracted to: {instrumental_path}")
+    return vocals_path, instrumental_path
 
 def transcribe_with_gladia(audio_path: str, source_lang: str, target_lang: str) -> dict:
     """Transcribe audio using Gladia API"""
@@ -282,6 +307,42 @@ def convert_gladia_to_internal_format(gladia_response):
     
     return result
 
+def detect_sentence_ends(vocal_file: str, min_silence_len: int = 300, silence_db: int = -35) -> list:
+    """Detect sentence endings based on vocal silence"""
+    from pydub import AudioSegment
+    from pydub.silence import detect_silence
+    
+    logger.info(f"Detecting sentence ends in: {vocal_file}")
+    audio = AudioSegment.from_file(vocal_file)
+    
+    silences = detect_silence(
+        audio,
+        min_silence_len=min_silence_len,
+        silence_thresh=silence_db
+    )
+    
+    # Convert to seconds and get sentence endings (start of silence)
+    sentence_endings = [round(start / 1000, 2) for start, end in silences]
+    
+    logger.info(f"Detected {len(sentence_endings)} sentence endings")
+    return sentence_endings
+
+def detect_beats(instrumental_file: str) -> list:
+    """Detect beat drops in instrumental track"""
+    import librosa
+    
+    logger.info(f"Detecting beats in: {instrumental_file}")
+    y, sr = librosa.load(instrumental_file)
+    
+    # Detect onsets (beat drops)
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+    onsets = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr)
+    beat_times = librosa.frames_to_time(onsets, sr=sr)
+    
+    beat_list = [round(t, 2) for t in beat_times]
+    logger.info(f"Detected {len(beat_list)} beats")
+    return beat_list
+
 def cleanup_files(file_paths: list):
     """Clean up temporary files"""
     for file_path in file_paths:
@@ -328,6 +389,40 @@ def transcribe_with_gladia_cpu(vocals_data: str, source_lang: str, target_lang: 
         logger.error(f"CPU: Error in Gladia transcription: {str(e)}")
         return {"error": str(e)}
 
+@app.function(image=cpu_image, scaledown_window=2)
+@modal.fastapi_endpoint(method="POST")
+def analyze_audio_timing(request_data: dict):
+    """
+    Endpoint for analyzing audio timing (sentence ends and beat drops).
+    
+    Expected JSON input:
+    {
+        "url": "https://example.com/audio.mp3",
+        "min_silence_len": 300,  # optional, default 300ms
+        "silence_db": -35  # optional, default -35dB
+    }
+    """
+    try:
+        audio_url = request_data.get("url")
+        
+        if not audio_url:
+            return {"error": "Missing 'url' parameter"}
+        
+        logger.info(f"Timing Analysis: Processing URL: {audio_url}")
+        
+        # Extract vocals and analyze timing
+        result = extract_vocals_gpu.remote(audio_url, detect_timing=True)
+        
+        # Return only timing data (not vocals)
+        return {
+            "sentence_ends": result.get("sentence_ends", []),
+            "beat_drops": result.get("beat_drops", [])
+        }
+        
+    except Exception as e:
+        logger.error(f"Timing Analysis: Error: {str(e)}")
+        return {"error": str(e)}
+
 # Main orchestration endpoint
 @app.function(image=cpu_image, scaledown_window=2)
 @modal.fastapi_endpoint(method="POST")
@@ -339,7 +434,8 @@ def transcribe_endpoint(request_data: dict):
     {
         "url": "https://example.com/audio.mp3",
         "lng": "en", 
-        "lng_input": "auto"
+        "lng_input": "auto",
+        "detect_timing": false  # optional, set to true to include sentence ends and beat drops
     }
     """
     try:
@@ -347,19 +443,27 @@ def transcribe_endpoint(request_data: dict):
         audio_url = request_data.get("url")
         output_lang = request_data.get("lng", "en")
         input_lang = request_data.get("lng_input", "auto")
+        detect_timing = request_data.get("detect_timing", False)
         
         if not audio_url:
             return {"error": "Missing 'url' parameter"}
         
-        logger.info(f"Main: Processing request - URL: {audio_url}, Input: {input_lang}, Output: {output_lang}")
+        logger.info(f"Main: Processing request - URL: {audio_url}, Input: {input_lang}, Output: {output_lang}, Timing: {detect_timing}")
         
         # Step 1: Extract vocals using GPU function
         logger.info("Main: Starting GPU vocal extraction...")
-        vocals_data = extract_vocals_gpu.remote(audio_url)
+        gpu_result = extract_vocals_gpu.remote(audio_url, detect_timing=detect_timing)
         
         # Step 2: Transcribe using CPU function (no GPU cost during waiting)
         logger.info("Main: Starting CPU Gladia transcription...")
-        result = transcribe_with_gladia_cpu.remote(vocals_data, input_lang, output_lang)
+        vocals_data = gpu_result["vocals_data"]
+        transcription_result = transcribe_with_gladia_cpu.remote(vocals_data, input_lang, output_lang)
+        
+        # Step 3: Combine results
+        result = transcription_result
+        if detect_timing:
+            result["sentence_ends"] = gpu_result.get("sentence_ends", [])
+            result["beat_drops"] = gpu_result.get("beat_drops", [])
         
         logger.info("Main: Transcription pipeline completed")
         return result
@@ -373,9 +477,10 @@ if __name__ == "__main__":
     test_request = {
         "url": "https://example.com/test-audio.mp3",
         "lng": "en",
-        "lng_input": "auto"
+        "lng_input": "auto",
+        "detect_timing": True
     }
     
     with app.run():
-        result = transcribe_audio_endpoint.remote(test_request)
+        result = transcribe_endpoint.remote(test_request)
         print(json.dumps(result, indent=2))
