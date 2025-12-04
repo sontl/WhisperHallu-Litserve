@@ -40,6 +40,11 @@ class TrimRequest(BaseModel):
 class LastFrameRequest(BaseModel):
     url: str
 
+class TrimAudioRequest(BaseModel):
+    url: str
+    start: Optional[float] = None
+    end: Optional[float] = None
+
 @app.function(image=image, scaledown_window=2)
 @modal.fastapi_endpoint(method="POST", docs=True)
 def get_duration(request: DurationRequest):
@@ -219,6 +224,88 @@ def trim_video(request: TrimRequest):
     except ffmpeg.Error as e:
         logger.error(f"Failed to trim video: {str(e)}")
         raise modal.Error(f"Failed to trim video: {str(e)}")
+    finally:
+        if os.path.exists(temp_input.name):
+            os.unlink(temp_input.name)
+            logger.info(f"Cleaned up temporary input file: {temp_input.name}")
+        if os.path.exists(temp_output.name):
+            os.unlink(temp_output.name)
+            logger.info(f"Cleaned up temporary output file: {temp_output.name}")
+
+@app.function(image=image, scaledown_window=2)
+@modal.fastapi_endpoint(method="POST", docs=True)
+def trim_audio(request: TrimAudioRequest):
+    """Trim an audio file from a URL. If start is None, starts from beginning. If end is None, goes to end of audio."""
+    url = request.url
+    start = request.start
+    end = request.end
+    logger.info(f"Trimming audio from URL: {url}, start={start}, end={end}")
+    temp_input = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    temp_output = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    logger.info(f"Created temporary files: input={temp_input.name}, output={temp_output.name}")
+    import ffmpeg
+    
+    try:
+        # Download the audio file
+        logger.info("Downloading audio file...")
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+        logger.info(f"Successfully downloaded {len(response.content)} bytes")
+        
+        temp_input.write(response.content)
+        temp_input.close()
+        logger.info("Saved audio to temporary file")
+        
+        # Build FFmpeg command
+        input_kwargs = {}
+        output_kwargs = {'c': 'copy'}  # Use stream copy for speed
+        
+        if start is not None:
+            input_kwargs['ss'] = start
+            logger.info(f"Setting start time: {start}s")
+        
+        if end is not None:
+            if start is not None:
+                output_kwargs['t'] = end - start
+                logger.info(f"Setting duration: {end - start}s")
+            else:
+                output_kwargs['to'] = end
+                logger.info(f"Setting end time: {end}s")
+        
+        # Trim the audio
+        logger.info("Trimming audio...")
+        (
+            ffmpeg
+            .input(temp_input.name, **input_kwargs)
+            .output(temp_output.name, **output_kwargs)
+            .overwrite_output()
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        logger.info("Successfully trimmed audio")
+        
+        # Read the trimmed audio
+        with open(temp_output.name, 'rb') as f:
+            audio_data = f.read()
+        
+        logger.info(f"Trimmed audio size: {len(audio_data)} bytes")
+        
+        # Return as base64 encoded string
+        import base64
+        audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+        
+        return {
+            "audio": audio_base64,
+            "format": "mp3",
+            "start": start if start is not None else 0,
+            "end": end
+        }
+        
+    except requests.RequestException as e:
+        logger.error(f"Failed to download audio: {str(e)}")
+        raise modal.Error(f"Failed to download audio: {str(e)}")
+    except ffmpeg.Error as e:
+        logger.error(f"Failed to trim audio: {str(e)}")
+        raise modal.Error(f"Failed to trim audio: {str(e)}")
     finally:
         if os.path.exists(temp_input.name):
             os.unlink(temp_input.name)
