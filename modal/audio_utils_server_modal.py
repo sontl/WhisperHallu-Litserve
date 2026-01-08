@@ -103,6 +103,7 @@ class AudioUtilsService:
         """Extract a thumbnail from a video URL at the specified timestamp."""
         import ffmpeg
         import base64
+        import time
         
         logger.info(f"Extracting thumbnail from video URL: {url} at {timestamp}s")
         temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -110,10 +111,28 @@ class AudioUtilsService:
         logger.info(f"Created temporary files: video={temp_video.name}, thumbnail={temp_thumb.name}")
         
         try:
-            logger.info("Downloading video file...")
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            logger.info(f"Successfully downloaded {len(response.content)} bytes")
+            # Retry logic for video download
+            max_retries = 3
+            retry_delay = 2  # seconds between retries
+            download_timeout = 60  # increased timeout
+            last_error = None
+            
+            for attempt in range(1, max_retries + 1):
+                try:
+                    logger.info(f"Downloading video file... (attempt {attempt}/{max_retries})")
+                    response = requests.get(url, timeout=download_timeout)
+                    response.raise_for_status()
+                    logger.info(f"Successfully downloaded {len(response.content)} bytes")
+                    break  # Success, exit retry loop
+                except requests.RequestException as e:
+                    last_error = e
+                    logger.warning(f"Download attempt {attempt}/{max_retries} failed: {str(e)}")
+                    if attempt < max_retries:
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                    else:
+                        logger.error(f"All {max_retries} download attempts failed")
+                        raise RuntimeError(f"Failed to download video after {max_retries} attempts: {str(last_error)}")
             
             temp_video.write(response.content)
             temp_video.close()
@@ -251,8 +270,17 @@ class AudioUtilsService:
             temp_input.close()
             logger.info("Saved audio to temporary file")
             
+            # Probe input file to get format info
+            try:
+                probe = ffmpeg.probe(temp_input.name)
+                input_format = probe.get('format', {}).get('format_name', 'unknown')
+                logger.info(f"Input audio format: {input_format}")
+            except Exception as probe_err:
+                logger.warning(f"Could not probe input file: {probe_err}")
+            
             input_kwargs = {}
-            output_kwargs = {'c': 'copy'}
+            # Re-encode instead of stream copy for better compatibility
+            output_kwargs = {'acodec': 'libmp3lame', 'audio_bitrate': '192k'}
             
             if start is not None:
                 input_kwargs['ss'] = start
@@ -267,13 +295,19 @@ class AudioUtilsService:
                     logger.info(f"Setting end time: {end}s")
             
             logger.info("Trimming audio...")
-            (
-                ffmpeg
-                .input(temp_input.name, **input_kwargs)
-                .output(temp_output.name, **output_kwargs)
-                .overwrite_output()
-                .run(capture_stdout=True, capture_stderr=True)
-            )
+            try:
+                (
+                    ffmpeg
+                    .input(temp_input.name, **input_kwargs)
+                    .output(temp_output.name, **output_kwargs)
+                    .overwrite_output()
+                    .run(capture_stdout=True, capture_stderr=True)
+                )
+            except ffmpeg.Error as ffmpeg_err:
+                stderr_output = ffmpeg_err.stderr.decode('utf-8') if ffmpeg_err.stderr else 'No stderr'
+                logger.error(f"FFmpeg stderr: {stderr_output}")
+                raise RuntimeError(f"FFmpeg error: {stderr_output}")
+            
             logger.info("Successfully trimmed audio")
             
             with open(temp_output.name, 'rb') as f:
@@ -293,6 +327,8 @@ class AudioUtilsService:
         except requests.RequestException as e:
             logger.error(f"Failed to download audio: {str(e)}")
             raise RuntimeError(f"Failed to download audio: {str(e)}")
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to trim audio: {str(e)}")
             raise RuntimeError(f"Failed to trim audio: {str(e)}")
