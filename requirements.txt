@@ -7,6 +7,11 @@ python-multipart  # For handling file uploads
 moviepy==1.0.3  # For handling video files
 requests>=2.28.1  # For handling HTTP requests
 opencv-python>=4.8.0.76  # For handling image files
+Pillow>=9.0.0  # For image processing and format validation
 fastapi
 boto3>=1.26.0  # For R2/S3 bucket operations
 python-dotenv>=0.19.0  # For loading .env files
+realesrgan  # Real-ESRGAN for image upscaling (official xinntao implementation)
+basicsr  # Required by Real-ESRGAN
+facexlib  # Required by Real-ESRGAN for face enhancement
+gfpgan  # Required by Real-ESRGAN for face restoration
